@@ -1,0 +1,26 @@
+---
+description: Always plan before writing code — produce a concise implementation plan, get it right, then execute
+alwaysApply: true
+---
+
+# Plan Before Coding
+
+Before writing any code, **always produce a concise implementation plan** first.
+
+## Required Planning Steps
+
+1. **Understand the problem** — read the issue description, relevant files, and existing tests carefully.
+2. **Identify the scope** — list which files will be created or modified and why.
+3. **Design the approach** — describe the algorithm, data structure, or architecture decision chosen, and why alternatives were rejected.
+4. **List acceptance criteria** — enumerate what must be true for the implementation to be considered complete.
+5. **Start coding only after the plan is clear** — do not write production code until steps 1–4 are done.
+
+## Format
+
+Output your plan as a short Markdown section titled `## Implementation Plan` before any code blocks.
+
+## Rationale
+
+- Planning catches design flaws before they are expensive to fix.
+- A written plan acts as a self-review and reduces unnecessary back-and-forth.
+- Separating thinking from typing improves output quality in autonomous sessions.

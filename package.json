@@ -1,42 +1,34 @@
 {
-  "name": "pruner",
+  "name": "pruner-proxy",
   "version": "1.0.0",
-  "description": "An intelligent proxy server for LLM API optimization",
-  "main": "./dist/index.js",
-  "bin": {
-    "pruner": "./dist/index.js"
-  },
+  "description": "Fastify-based HTTP proxy for Anthropic API optimization",
+  "main": "dist/proxy.js",
+  "type": "module",
   "scripts": {
     "build": "tsc",
-    "dev": "ts-node src/index.ts",
-    "start": "node dist/index.js",
-    "test": "jest"
+    "dev": "tsx src/proxy.ts",
+    "dev:test": "tsx src/test-proxy.ts",
+    "start": "node dist/proxy.js",
+    "test": "vitest",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write src/**/*.ts"
   },
-  "keywords": [
-    "llm",
-    "proxy",
-    "optimization",
-    "ai"
-  ],
-  "author": "OneGoToAI",
+  "keywords": ["proxy", "fastify", "anthropic"],
+  "author": "Pruner Team",
   "license": "MIT",
   "dependencies": {
-    "better-sqlite3": "^9.4.3",
-    "chalk": "^4.1.2",
-    "cli-table3": "^0.6.3",
-    "fastify": "^4.26.2",
-    "tiktoken": "^1.0.14"
+    "fastify": "^4.26.0",
+    "@fastify/http-proxy": "^9.5.0",
+    "undici": "^6.6.2"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/jest": "^29.5.12",
-    "@types/node": "^20.11.24",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.2",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.2"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "@types/node": "^20.11.17",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0",
+    "vitest": "^1.2.2",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "prettier": "^3.2.5"
   }
 }

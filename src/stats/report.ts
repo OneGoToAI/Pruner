@@ -162,4 +162,65 @@ export class StatsReporter {
 
     console.log(report);
   }
+
+  /**
+   * Generate and print a final report when the CLI session ends
+   */
+  printFinalReport(): void {
+    const stats = this.statsCounter.getStats();
+
+    if (stats.requests === 0) {
+      return; // No activity, no report needed
+    }
+
+    console.log('\n' + chalk.blue('=== Session Summary ==='));
+
+    const summaryTable = new Table({
+      head: [chalk.cyan('Metric'), chalk.cyan('Value')],
+      colWidths: [20, 15],
+      style: { head: [], border: [] }
+    });
+
+    summaryTable.push(
+      ['Requests', stats.requests.toString()],
+      ['Errors', stats.errors > 0 ? chalk.red(stats.errors.toString()) : '0'],
+      ['Cache Hits', stats.cacheHits > 0 ? chalk.green(stats.cacheHits.toString()) : '0'],
+      ['Tokens Saved', stats.totalTokensSaved > 0 ? chalk.blue(stats.totalTokensSaved.toString()) : '0'],
+      ['Session Time', `${stats.uptime}s`]
+    );
+
+    console.log(summaryTable.toString());
+
+    if (stats.cacheHits > 0) {
+      const hitRate = this.statsCounter.getCacheHitRate() * 100;
+      console.log(chalk.green(`🎯 Cache hit rate: ${hitRate.toFixed(1)}%`));
+    }
+
+    if (stats.totalTokensSaved > 0) {
+      console.log(chalk.blue(`💾 Total tokens saved: ${stats.totalTokensSaved}`));
+    }
+
+    console.log();
+  }
+}
+
+/**
+ * Standalone function to print final report with current stats
+ */
+export function printFinalReport(statsCounter: StatsCounter): void {
+  const dummyDb = {
+    getStatsByDateRange: () => [],
+    getTotalStats: () => ({
+      total_requests: 0,
+      total_errors: 0,
+      total_tokens: 0,
+      total_cache_hits: 0,
+      avg_response_time: 0,
+      first_request: '',
+      last_request: ''
+    })
+  } as any;
+
+  const reporter = new StatsReporter(statsCounter, dummyDb);
+  reporter.printFinalReport();
 }

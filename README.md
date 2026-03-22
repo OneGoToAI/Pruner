@@ -1,153 +1,105 @@
-# Pruner - Token Compression Proxy for Claude API
+# Pruner - Token Compression Proxy
 
-A proxy server that compresses tokens in Claude API requests and provides real-time token statistics logging.
+A session reporting system for Claude API token compression.
 
 ## Features
 
-- **Token Compression**: Reduces token count in Claude API requests (mock implementation)
-- **Real-time Statistics**: Prints colored token statistics after each request
-- **Graceful Fallback**: Handles compression engine failures with passthrough mode
-- **Number Formatting**: Displays token counts with thousand separators
-- **Colored Output**: Uses chalk for beautiful console output
+### Session Reporting
+- Tracks API requests, token usage, and compression statistics
+- Calculates cost savings in real-time
+- Displays beautiful formatted reports on session completion
+- Persists cumulative statistics across sessions
 
-## Implementation Details
+### Banner Display
+- Startup banner with version and port information
+- Detailed final report with Unicode table formatting
+- Friendly messages for sessions with zero requests
+- Colorized output using chalk
 
-### Token Statistics Output Format
+## Usage
 
-The system prints token statistics in the following format after each `POST /v1/messages` request:
+```typescript
+import { initializeSession, recordRequest, finalizeSession } from './src/stats/report';
+import { printStartupBanner, printFinalReport, setupExitHandlers } from './src/ui/banner';
 
-```
-[Pruner] ↓ 压缩: 4,231 → 1,052 tokens (-75.1%) | 节省: $0.010
-```
+// Initialize session
+const session = initializeSession();
 
-**Color coding:**
-- Blue: `[Pruner]` label
-- Cyan: ↓ compression arrow
-- Green: Compression percentage and savings (when > 0)
-- Gray: Zero compression or passthrough mode
+// Print startup banner
+printStartupBanner({
+  version: '1.0.0',
+  port: 8080,
+  showDetailedStats: true
+});
 
-### Passthrough Mode
+// Setup exit handlers for automatic reporting
+setupExitHandlers(() => session.getSessionStats());
 
-When the compression engine fails or is degraded, the system shows:
+// Record API requests
+recordRequest(10000, 7500); // originalTokens, compressedTokens
 
-```
-[Pruner] → 透传: 4,231 tokens | 无压缩
-```
-
-## Project Structure
-
-```
-src/
-├── proxy.ts          # Main proxy server with token logging
-├── index.ts           # Application entry point
-└── __tests__/
-    └── proxy.test.ts  # Comprehensive test suite
-```
-
-## Key Functions
-
-### `calculateTokenStats(originalTokens, compressedTokens)`
-Calculates compression statistics including ratio and cost savings.
-
-### `printTokenStats(stats, isPassthrough)`
-Prints formatted token statistics to console with colored output.
-
-### `formatNumber(num)`
-Formats numbers with thousand separators (e.g., 4231 → 4,231).
-
-### `compressMessages(messages)`
-Mock compression function (replace with actual compression engine).
-
-### `createProxyRouter()`
-Express router handling `/v1/messages` POST requests.
-
-## API Endpoints
-
-### `POST /v1/messages`
-Proxies Claude API requests with token compression and logging.
-
-**Request:**
-```json
-{
-  "model": "claude-3.5-sonnet-20241022",
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ],
-  "max_tokens": 100
+// Finalize and display report
+const finalStats = finalizeSession();
+if (finalStats) {
+  printFinalReport(finalStats);
 }
 ```
 
-**Response:**
-```json
-{
-  "id": "msg_1234567890",
-  "type": "message",
-  "role": "assistant",
-  "content": [{"type": "text", "text": "Response"}],
-  "model": "claude-3.5-sonnet-20241022",
-  "usage": {
-    "input_tokens": 1052,
-    "output_tokens": 150
-  }
-}
+## Example Output
+
+### Normal Session
+```
+╔══════════════════════════════════════════╗
+║         💰 Pruner 会话报告               ║
+╠══════════════════════════════════════════╣
+║  请求数        12                        ║
+║  原始 Token    128,432                   ║
+║  压缩后 Token   31,204                   ║
+║  节省比例       75.7%                    ║
+║  本次节省       $0.29                    ║
+║  累计节省       $12.47                   ║
+╚══════════════════════════════════════════╝
 ```
 
-### `GET /health`
-Health check endpoint.
+### Empty Session
+```
+╔══════════════════════════════════════════╗
+║         💤 Pruner 会话报告               ║
+╠══════════════════════════════════════════╣
+║      本次会话未处理任何请求              ║
+║      提示：代理已就绪，等待 API 请求     ║
+╚══════════════════════════════════════════╝
+```
 
-## Running the Application
+## Development
 
-### Development
 ```bash
+# Install dependencies
 npm install
-npm run dev
-```
 
-### Production
-```bash
-npm run build
-npm start
-```
-
-### Testing
-```bash
+# Run tests
 npm test
+
+# Build
+npm run build
+
+# Run example
+npm run dev
+# or
+node dist/example.js
 ```
 
-## Environment Variables
+## Architecture
 
-- `PORT`: Server port (default: 3000)
-- `HOST`: Server host (default: 0.0.0.0)
-- `NODE_ENV`: Environment mode
+- **`src/types.ts`**: TypeScript type definitions
+- **`src/stats/report.ts`**: Session statistics tracking and management
+- **`src/ui/banner.ts`**: Banner and report display functionality
+- **`src/example.ts`**: Usage demonstration
+- **`tests/`**: Comprehensive test suite with mocks
 
-## Implementation Requirements Met
+## Dependencies
 
-✅ **Token Statistics Logging**: Implemented after each `POST /v1/messages` request
-✅ **Chalk Coloring**: Blue/cyan/green colored output
-✅ **Number Formatting**: Thousand separators (4,231)
-✅ **Compression Display**: Shows original → compressed tokens with percentage
-✅ **Cost Savings**: Displays estimated savings in USD
-✅ **Fallback Handling**: Graceful degradation with passthrough mode
-✅ **Chinese Text**: Supports Chinese characters in output
-✅ **Comprehensive Tests**: Full test coverage for all functionality
-
-## Next Steps
-
-To integrate with a real compression engine:
-
-1. Replace the mock `compressMessages()` function with actual compression logic
-2. Add real Claude API forwarding (replace mock response)
-3. Configure proper authentication for Claude API
-4. Add production logging and monitoring
-5. Implement caching and rate limiting as needed
-
-## Testing
-
-The project includes comprehensive tests covering:
-- Token calculation and formatting functions
-- Compression statistics
-- Express API endpoints
-- Error handling
-- Edge cases (empty messages, malformed requests)
-
-Run tests with: `npm test`
+- **chalk**: Terminal colors and styling
+- **cli-table3**: Unicode table formatting
+- **TypeScript**: Type safety and modern JavaScript features
+- **Jest**: Testing framework

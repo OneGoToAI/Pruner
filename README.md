@@ -1,136 +1,81 @@
-# Pruner Proxy
+# Session Stats
 
-A Fastify-based HTTP proxy server that forwards requests to the Anthropic API. This proxy provides local request optimization and processing capabilities while maintaining full compatibility with the Anthropic API.
+Real-time tracking of session token and cost data for AI model requests.
 
 ## Features
 
-- **Local-only binding**: Only listens on `127.0.0.1` for security
-- **Complete API compatibility**: All Anthropic API endpoints are supported
-- **Streaming support**: Handles Server-Sent Events (SSE) for streaming responses
-- **Header forwarding**: Preserves all necessary headers (`x-api-key`, `anthropic-version`, etc.)
-- **Error handling**: Proper timeout handling (120s) and error passthrough
-- **HTTP/1.1 compliant**: Handles response headers correctly
+- **In-memory session tracking**: Maintains session statistics in memory for real-time access
+- **Token usage monitoring**: Tracks both input (original) and output (completion) tokens
+- **Cost calculation**: Calculates saved costs based on configurable pricing
+- **Multiple model support**: Works with any model name/identifier
+- **TypeScript support**: Full TypeScript definitions included
 
 ## Installation
 
 ```bash
 npm install
+npm run build
 ```
 
 ## Usage
 
-### Development Mode
+```typescript
+import { recordRequest, getSessionStats, resetSession } from './dist/index';
 
-Start the proxy server in development mode with hot reloading:
+// Record a request with token usage
+recordRequest(1000, 500, 'gpt-4');
+recordRequest(800, 400, 'claude-2');
 
-```bash
-npm run dev
+// Get current session statistics
+const stats = getSessionStats();
+console.log({
+  requests: stats.requests,        // 2
+  origTokens: stats.origTokens,    // 1800
+  compTokens: stats.compTokens,    // 900
+  savedCost: stats.savedCost,      // calculated based on pricing config
+  startedAt: stats.startedAt       // session start timestamp
+});
+
+// Reset session to start fresh
+resetSession();
 ```
 
-The server will start on `http://127.0.0.1:8080` by default.
+## API
 
-### Production Mode
+### `recordRequest(orig: number, comp: number, model: string): void`
 
-Build and run in production:
+Records a new request with token usage data.
 
-```bash
-npm run build
-npm start
-```
+- `orig`: Number of original (input) tokens
+- `comp`: Number of completion (output) tokens
+- `model`: Model identifier (for reference, doesn't affect calculations)
 
-### Custom Port
+### `getSessionStats(): SessionStats`
 
-Set a custom port using the `PORT` environment variable:
+Returns current session statistics. The returned object is a copy and can be safely modified.
 
-```bash
-PORT=3000 npm run dev
-```
+### `resetSession(): void`
 
-## API Routes
-
-All routes are proxied to `https://api.anthropic.com`:
-
-- `POST /v1/messages` - Chat completions (streaming and non-streaming)
-- `GET /v1/models` - List available models
-- All other Anthropic API endpoints are supported
+Resets session statistics to initial state with a new start timestamp.
 
 ## Configuration
 
-### Required Headers
+Pricing is configured with the following default values (per million tokens):
 
-When making requests through the proxy, include the same headers you would use with the Anthropic API:
+- Input tokens: $3.00
+- Cache read tokens: $0.30
+- Cache write tokens: $3.75
 
-```bash
-curl -X POST http://127.0.0.1:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key-here" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "claude-3-sonnet-20240229",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-### Streaming Requests
-
-The proxy automatically detects and handles streaming responses:
-
-```bash
-curl -X POST http://127.0.0.1:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key-here" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "claude-3-sonnet-20240229",
-    "max_tokens": 1024,
-    "stream": true,
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-## Development
-
-### Running Tests
+## Testing
 
 ```bash
 npm test
 ```
 
-### Manual Testing
-
-Run the interactive test script:
+## Building
 
 ```bash
-npm run dev:test
+npm run build
 ```
 
-This starts a test server for 30 seconds with example curl commands.
-
-### Linting and Formatting
-
-```bash
-npm run lint
-npm run format
-```
-
-## Error Handling
-
-- **Network timeouts**: Returns `504 Gateway Timeout` after 120 seconds
-- **Anthropic API errors**: All `4xx` and `5xx` errors are passed through unchanged
-- **Connection errors**: Returns `502 Bad Gateway` for connection failures
-
-## Architecture
-
-The proxy is built with:
-
-- **Fastify**: High-performance web framework
-- **undici**: Modern HTTP/1.1 client for Node.js
-- **TypeScript**: Type-safe development
-- **Vitest**: Fast testing framework
-
-## Security
-
-- Only binds to `127.0.0.1` (localhost) - not accessible from external networks
-- Does not log or store API keys or request contents
-- Forwards all security headers without modification
+Built files will be available in the `dist/` directory with full TypeScript declarations.

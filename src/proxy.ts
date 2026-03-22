@@ -1,33 +1,83 @@
-#!/usr/bin/env node
+// Copyright (c) 2026 OneGoToAI. All Rights Reserved.
+// Proprietary and confidential. Unauthorized use prohibited.
 
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { request as undiciRequest, Response } from 'undici';
+import { request as undiciRequest } from 'undici';
+import chalk from 'chalk';
+import { getConfig } from './config.js';
+import { optimize } from './optimizer/index.js';
+import { countTokens } from './stats/counter.js';
+import { recordRequest, getStats, type RequestMetrics } from './stats/session.js';
 
 const ANTHROPIC_API_BASE = 'https://api.anthropic.com';
-const DEFAULT_PORT = 8080;
-const REQUEST_TIMEOUT = 120 * 1000; // 120 seconds in milliseconds
+const REQUEST_TIMEOUT = 120 * 1000;
+
+function formatNumber(n: number): string {
+  return n.toLocaleString('en-US');
+}
 
 interface ProxyServer {
   start(): Promise<void>;
   stop(): Promise<void>;
 }
 
-class AnthropicProxy implements ProxyServer {
+interface UsageData {
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+/**
+ * Parse cache usage from a non-streaming JSON response body.
+ */
+function extractUsageFromJson(text: string): UsageData {
+  try {
+    const json = JSON.parse(text);
+    return {
+      cache_read_input_tokens: json?.usage?.cache_read_input_tokens ?? 0,
+      cache_creation_input_tokens: json?.usage?.cache_creation_input_tokens ?? 0,
+    };
+  } catch {
+    return { cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  }
+}
+
+/**
+ * Parse cache usage from SSE stream chunks. Anthropic sends usage in
+ * `message_start` and `message_delta` events. We accumulate both.
+ */
+function extractUsageFromSSE(chunks: string): UsageData {
+  let cacheRead = 0;
+  let cacheCreation = 0;
+
+  const lines = chunks.split('\n');
+  for (const line of lines) {
+    if (!line.startsWith('data: ')) continue;
+    const data = line.slice(6);
+    if (data === '[DONE]') continue;
+    try {
+      const parsed = JSON.parse(data);
+      const usage = parsed?.message?.usage ?? parsed?.usage;
+      if (usage) {
+        if (usage.cache_read_input_tokens) cacheRead += usage.cache_read_input_tokens;
+        if (usage.cache_creation_input_tokens) cacheCreation += usage.cache_creation_input_tokens;
+      }
+    } catch { /* not all lines are valid JSON */ }
+  }
+
+  return { cache_read_input_tokens: cacheRead, cache_creation_input_tokens: cacheCreation };
+}
+
+export class AnthropicProxy implements ProxyServer {
   private fastify: FastifyInstance;
   private port: number;
 
-  constructor(port: number = DEFAULT_PORT) {
+  constructor(port: number) {
     this.port = port;
-    this.fastify = Fastify({
-      logger: true,
-      trustProxy: false, // Only trust localhost
-    });
-
+    this.fastify = Fastify({ logger: false });
     this.setupRoutes();
   }
 
   private setupRoutes(): void {
-    // Catch-all route to proxy everything to Anthropic
     this.fastify.all('*', this.proxyHandler.bind(this));
   }
 
@@ -36,53 +86,88 @@ class AnthropicProxy implements ProxyServer {
     reply: FastifyReply
   ): Promise<void> {
     const targetUrl = `${ANTHROPIC_API_BASE}${request.url}`;
+    const urlPath = request.url.split('?')[0];
+    const isMessagesEndpoint =
+      request.method === 'POST' && urlPath === '/v1/messages';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const requestBody = request.body as any;
+
+    const origTokens = isMessagesEndpoint && requestBody
+      ? countTokens(requestBody)
+      : 0;
+
+    let optimizedBody = requestBody;
+    let extraHeaders: Record<string, string> = {};
+    let clientCacheDetected = false;
+    if (isMessagesEndpoint && requestBody) {
+      const result = optimize(requestBody);
+      optimizedBody = result.body;
+      extraHeaders = result.extraHeaders;
+      clientCacheDetected = result.clientCacheDetected;
+    }
+
+    const compTokens = isMessagesEndpoint && optimizedBody
+      ? countTokens(optimizedBody)
+      : origTokens;
 
     try {
-      // Prepare headers, filtering out connection-specific headers
       const forwardHeaders: Record<string, string> = {};
-
-      // Copy all headers from the original request
       for (const [key, value] of Object.entries(request.headers)) {
-        // Skip connection-specific headers that undici handles automatically
         const lowerKey = key.toLowerCase();
         if (
           lowerKey !== 'host' &&
           lowerKey !== 'connection' &&
           lowerKey !== 'transfer-encoding' &&
+          // Strip Accept-Encoding so Anthropic returns uncompressed responses.
+          // undici decompresses automatically, but forwarding the original
+          // Content-Encoding header causes the client to double-decompress → ZlibError.
+          lowerKey !== 'accept-encoding' &&
+          // Strip Content-Length: the optimizer may change the body size
+          // (e.g. injecting cache_control). Let undici recalculate from the
+          // actual serialised body to avoid a length mismatch → 502.
+          lowerKey !== 'content-length' &&
           value !== undefined
         ) {
           forwardHeaders[key] = Array.isArray(value) ? value.join(', ') : String(value);
         }
       }
+      // Merge extra headers from the optimizer. For anthropic-beta specifically,
+      // append rather than overwrite: Claude CLI sends its own beta flags
+      // (e.g. claude-code-20250219) that identify it as a Claude Code client and
+      // enable OAuth auth. Overwriting them causes a 401 "OAuth not supported".
+      for (const [k, v] of Object.entries(extraHeaders)) {
+        const existing = forwardHeaders[k] ?? forwardHeaders[k.toLowerCase()];
+        if (k.toLowerCase() === 'anthropic-beta' && existing) {
+          const parts = new Set([...existing.split(',').map(s => s.trim()), v.trim()]);
+          forwardHeaders[k] = [...parts].join(',');
+        } else {
+          forwardHeaders[k] = v;
+        }
+      }
 
-      // Get the request body properly
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let body: any = undefined;
       if (request.method !== 'GET' && request.method !== 'HEAD') {
-        body = request.body;
-        // If body is an object, stringify it
+        body = optimizedBody;
         if (typeof body === 'object' && body !== null) {
           body = JSON.stringify(body);
         }
       }
 
-      // Make the request to Anthropic API
       const response = await undiciRequest(targetUrl, {
-        method: request.method as any,
+        method: request.method as 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS',
         headers: forwardHeaders,
         body,
-        maxRedirections: 0, // Don't follow redirects
+        maxRedirections: 0,
         headersTimeout: REQUEST_TIMEOUT,
         bodyTimeout: REQUEST_TIMEOUT,
       });
 
-      // Set response status
       reply.code(response.statusCode);
 
-      // Forward response headers, excluding conflicting ones
-      const responseHeaders = response.headers;
-      for (const [key, value] of Object.entries(responseHeaders)) {
+      for (const [key, value] of Object.entries(response.headers)) {
         const lowerKey = key.toLowerCase();
-        // Skip headers that Fastify or HTTP client will handle automatically
         if (
           value !== undefined &&
           lowerKey !== 'content-length' &&
@@ -93,119 +178,146 @@ class AnthropicProxy implements ProxyServer {
         }
       }
 
-      // Check if this is a streaming response
-      const contentType = responseHeaders['content-type'] as string;
+      const contentType = response.headers['content-type'] as string;
       const isStreaming = contentType?.includes('text/event-stream');
 
       if (isStreaming) {
-        // For streaming responses, pipe directly without modification
+        if (isMessagesEndpoint && response.statusCode === 200) {
+          const sseChunks: string[] = [];
+
+          response.body.on('data', (chunk: Buffer) => {
+            sseChunks.push(chunk.toString());
+          });
+
+          let recorded = false;
+          const onEnd = () => {
+            if (recorded) return;
+            recorded = true;
+
+            const usage = extractUsageFromSSE(sseChunks.join(''));
+            const metrics: RequestMetrics = {
+              origTokens,
+              compTokens,
+              cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+              cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+            };
+            recordRequest(metrics);
+            this.printRequestLog(metrics, clientCacheDetected);
+          };
+          response.body.once('end', onEnd);
+          response.body.once('close', onEnd);
+        }
         reply.send(response.body);
       } else {
-        // For non-streaming responses, get the full body
-        const body = await response.body.text();
-        reply.send(body);
+        const responseText = await response.body.text();
+
+        if (isMessagesEndpoint && response.statusCode === 200) {
+          const usage = extractUsageFromJson(responseText);
+          const metrics: RequestMetrics = {
+            origTokens,
+            compTokens,
+            cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+          };
+          recordRequest(metrics);
+          this.printRequestLog(metrics, clientCacheDetected);
+        }
+
+        reply.send(responseText);
       }
 
-    } catch (error: any) {
-      this.fastify.log.error(error, 'Proxy request failed');
+    } catch (error: unknown) {
+      const err = error as NodeJS.ErrnoException & { statusCode?: number; body?: unknown };
 
-      // Check if it's a timeout error
-      if (error.code === 'UND_ERR_HEADERS_TIMEOUT' ||
-          error.code === 'UND_ERR_BODY_TIMEOUT' ||
-          error.code === 'ETIMEDOUT') {
+      if (
+        err.code === 'UND_ERR_HEADERS_TIMEOUT' ||
+        err.code === 'UND_ERR_BODY_TIMEOUT' ||
+        err.code === 'ETIMEDOUT'
+      ) {
         reply.code(504).send({
-          error: {
-            type: 'gateway_timeout',
-            message: 'Request to Anthropic API timed out'
-          }
+          error: { type: 'gateway_timeout', message: 'Request to Anthropic API timed out' },
         });
-      } else if (error.statusCode) {
-        // Forward HTTP error responses from Anthropic
-        reply.code(error.statusCode);
-        if (error.body) {
-          reply.send(error.body);
-        } else {
-          reply.send({
-            error: {
-              type: 'api_error',
-              message: error.message || 'Unknown error occurred'
-            }
-          });
-        }
+      } else if (err.statusCode) {
+        reply.code(err.statusCode);
+        reply.send(err.body ?? {
+          error: { type: 'api_error', message: err.message ?? 'Unknown error occurred' },
+        });
       } else {
-        // Network or other errors
         reply.code(502).send({
-          error: {
-            type: 'bad_gateway',
-            message: 'Failed to connect to Anthropic API'
-          }
+          error: { type: 'bad_gateway', message: 'Failed to connect to Anthropic API' },
         });
       }
     }
+  }
+
+  private printRequestLog(metrics: RequestMetrics, clientCacheDetected: boolean): void {
+    const { origTokens, compTokens, cacheReadTokens } = metrics;
+    const savedTokens = origTokens - compTokens;
+    const savePct = origTokens > 0 ? (savedTokens / origTokens) * 100 : 0;
+    const { pricing } = getConfig();
+    const pruneSaved = (savedTokens / 1_000_000) * pricing.inputPerMillion;
+    const stats = getStats();
+
+    // ── build the content line ──────────────────────────────────────────────
+    const cols: string[] = [];
+
+    // Request counter
+    cols.push(chalk.bold.cyan(`#${stats.requests}`));
+
+    // Token savings from pruning
+    if (savedTokens > 0) {
+      cols.push(
+        chalk.cyan(`${formatNumber(origTokens)}→${formatNumber(compTokens)} tok`) +
+        chalk.green(` -${savePct.toFixed(1)}%`) +
+        chalk.yellow(` $${pruneSaved.toFixed(4)}`),
+      );
+    } else {
+      cols.push(chalk.dim(`${formatNumber(origTokens)} tok`));
+    }
+
+    // Cache hit savings
+    if (cacheReadTokens > 0) {
+      const cacheSaved =
+        (cacheReadTokens / 1_000_000) * (pricing.inputPerMillion - pricing.cacheReadPerMillion);
+      cols.push(
+        chalk.magenta(`⚡ ${formatNumber(cacheReadTokens)} cached`) +
+        chalk.yellow(` $${cacheSaved.toFixed(4)}`),
+      );
+    } else if (clientCacheDetected) {
+      cols.push(chalk.dim('⚡ cache pending'));
+    }
+
+    // Cumulative
+    cols.push(chalk.gray(`Σ $${stats.savedCost.toFixed(4)}`));
+
+    const SEP = chalk.dim(' │ ');
+    const bar = chalk.dim('─'.repeat(52));
+    const label = chalk.bold.green('Pruner');
+    const content = cols.join(SEP);
+
+    // Two leading newlines push us below any partial Claude output line,
+    // the separator bar visually fences Pruner's output from AI text.
+    process.stderr.write(`\n${bar}\n ${label}  ${content}\n${bar}\n`);
   }
 
   async start(): Promise<void> {
-    try {
-      // Only bind to localhost for security
-      const address = await this.fastify.listen({
-        port: this.port,
-        host: '127.0.0.1'
-      });
-
-      console.log(`🚀 Anthropic proxy server running at ${address}`);
-      console.log(`📡 Proxying all requests to ${ANTHROPIC_API_BASE}`);
-    } catch (error) {
-      this.fastify.log.error(error);
-      throw error;
-    }
+    await this.fastify.listen({ port: this.port, host: '127.0.0.1' });
   }
 
   async stop(): Promise<void> {
-    try {
-      await this.fastify.close();
-      console.log('✅ Proxy server stopped gracefully');
-    } catch (error) {
-      this.fastify.log.error(error);
-      throw error;
-    }
+    await this.fastify.close();
   }
 }
 
-// CLI entry point
-async function main(): Promise<void> {
-  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : DEFAULT_PORT;
+export async function startProxy(port: number): Promise<() => Promise<void>> {
   const proxy = new AnthropicProxy(port);
-
-  // Graceful shutdown handling
-  const shutdown = async (): Promise<void> => {
-    console.log('\n🛑 Received shutdown signal, stopping server...');
-    try {
-      await proxy.stop();
-      process.exit(0);
-    } catch (error) {
-      console.error('❌ Error during shutdown:', error);
-      process.exit(1);
-    }
-  };
-
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
-
-  try {
-    await proxy.start();
-  } catch (error) {
-    console.error('❌ Failed to start proxy server:', error);
-    process.exit(1);
-  }
-}
-
-// Export for testing
-export { AnthropicProxy };
-
-// Run if this is the main module
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
+  await proxy.start();
+  const bar = chalk.dim('─'.repeat(52));
+  process.stderr.write(
+    `${bar}\n` +
+    ` ${chalk.bold.green('Pruner')}  ${chalk.dim('proxy')} ${chalk.white(`→ 127.0.0.1:${port}`)}  ` +
+    chalk.dim('optimizing your Claude requests\n') +
+    `${bar}\n`
+  );
+  return () => proxy.stop();
 }

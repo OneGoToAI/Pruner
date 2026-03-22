@@ -1,0 +1,196 @@
+name: Release
+
+# Triggered by pushing a version tag, e.g. git tag v0.1.0 && git push --tags
+on:
+  push:
+    tags:
+      - 'v*'
+
+# This private repo only needs read access to contents.
+# Write access to the PUBLIC releases repo is handled via RELEASES_REPO_TOKEN.
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Build one binary per platform ────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.artifact }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest   # Apple Silicon runner
+            target: bun-darwin-arm64
+            artifact: pruner-darwin-arm64
+          - os: macos-13       # Intel runner
+            target: bun-darwin-x64
+            artifact: pruner-darwin-x64
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            artifact: pruner-linux-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build binary
+        run: |
+          bun build --compile --target=${{ matrix.target }} src/index.ts \
+            --outfile ${{ matrix.artifact }}
+
+      - name: Compute SHA-256
+        id: sha
+        shell: bash
+        run: |
+          if command -v sha256sum &>/dev/null; then
+            HASH=$(sha256sum "${{ matrix.artifact }}" | awk '{print $1}')
+          else
+            HASH=$(shasum -a 256 "${{ matrix.artifact }}" | awk '{print $1}')
+          fi
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "$HASH  ${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}.sha256
+          path: ${{ matrix.artifact }}.sha256
+
+  # ── 2. Publish to the PUBLIC pruner-releases repo ───────────────────────────
+  #
+  # The source repo (OneGoToAI/Pruner) is PRIVATE.
+  # Binary downloads must be publicly accessible, so we publish to a separate
+  # PUBLIC repo: OneGoToAI/pruner-releases.
+  #
+  # Required secret: RELEASES_REPO_TOKEN
+  #   A GitHub PAT (classic) or fine-grained token with:
+  #     - Contents: read & write on OneGoToAI/pruner-releases
+  #     - Metadata: read
+  #
+  release:
+    name: Publish to pruner-releases
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4  # needed to get install.sh
+
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Make binaries executable
+        run: chmod +x pruner-darwin-arm64 pruner-darwin-x64 pruner-linux-x64
+
+      - name: Build checksums file
+        run: cat *.sha256 > checksums.txt
+
+      - name: Extract version
+        run: |
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      # Publish GitHub Release on the PUBLIC repo
+      - uses: softprops/action-gh-release@v2
+        with:
+          repository: OneGoToAI/pruner-releases
+          token: ${{ secrets.RELEASES_REPO_TOKEN }}
+          tag_name: ${{ env.tag }}
+          name: Pruner ${{ env.tag }}
+          body: |
+            ## Install
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash
+            ```
+
+            Or via Homebrew:
+            ```bash
+            brew install OneGoToAI/tap/pruner
+            ```
+
+            ## Verify checksums
+
+            ```bash
+            curl -fsSL https://github.com/OneGoToAI/pruner-releases/releases/download/${{ env.tag }}/checksums.txt
+            ```
+          files: |
+            pruner-darwin-arm64
+            pruner-darwin-x64
+            pruner-linux-x64
+            checksums.txt
+
+      # Push install.sh to the public repo's main branch so the curl URL works
+      - name: Push install.sh to pruner-releases
+        env:
+          TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          TAG: ${{ env.tag }}
+        run: |
+          git clone "https://x-access-token:${TOKEN}@github.com/OneGoToAI/pruner-releases.git" public-repo
+          cp install.sh public-repo/install.sh
+          cd public-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add install.sh
+          # Only commit if install.sh changed
+          git diff --staged --quiet || git commit -m "release: update install.sh for ${TAG}"
+          git push
+
+  # ── 3. Auto-update Homebrew Tap (opt-in) ─────────────────────────────────────
+  #
+  # Enable by setting repo variable: UPDATE_HOMEBREW_TAP = true
+  # Required secret: TAP_DEPLOY_TOKEN (write access to OneGoToAI/homebrew-tap)
+  #
+  update-homebrew-tap:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ vars.UPDATE_HOMEBREW_TAP == 'true' }}
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Compute values
+        run: |
+          echo "arm64_sha=$(cat pruner-darwin-arm64.sha256 | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "x64_sha=$(cat pruner-darwin-x64.sha256 | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Checkout homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: OneGoToAI/homebrew-tap
+          token: ${{ secrets.TAP_DEPLOY_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Formula version and SHA-256
+        run: |
+          sed -i \
+            -e "s|version \".*\"|version \"${{ env.version }}\"|" \
+            -e "/on_arm/,/end/ s|sha256 \".*\"|sha256 \"${{ env.arm64_sha }}\"|" \
+            -e "/on_intel/,/end/ s|sha256 \".*\"|sha256 \"${{ env.x64_sha }}\"|" \
+            homebrew-tap/Formula/pruner.rb
+
+      - name: Commit and push
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/pruner.rb
+          git diff --staged --quiet || git commit -m "chore: update pruner to ${{ env.tag }}"
+          git push

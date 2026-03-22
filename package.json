@@ -1,34 +1,49 @@
 {
-  "name": "pruner-proxy",
-  "version": "1.0.0",
-  "description": "Fastify-based HTTP proxy for Anthropic API optimization",
-  "main": "dist/proxy.js",
+  "name": "pruner",
+  "version": "0.1.0",
+  "description": "Zero-config cost optimizer for Claude CLI — auto-compress context and inject prompt cache",
+  "main": "dist/index.js",
+  "bin": {
+    "pruner": "./dist/index.js"
+  },
+  "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/proxy.ts",
-    "dev:test": "tsx src/test-proxy.ts",
-    "start": "node dist/proxy.js",
+
+    "dev": "tsx src/index.ts",
+    "dev:proxy": "tsx src/proxy.ts",
+    "start": "node dist/index.js",
     "test": "vitest",
     "lint": "eslint src/**/*.ts",
-    "format": "prettier --write src/**/*.ts"
+    "format": "prettier --write src/**/*.ts",
+    "build:bin:mac-arm": "bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/bin/pruner-darwin-arm64",
+    "build:bin:mac-x64": "bun build --compile --target=bun-darwin-x64 src/index.ts --outfile dist/bin/pruner-darwin-x64",
+    "build:bin:linux": "bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/bin/pruner-linux-x64",
+    "build:bin:win": "bun build --compile --target=bun-windows-x64 src/index.ts --outfile dist/bin/pruner-windows-x64.exe",
+    "build:bin": "npm run build:bin:mac-arm && npm run build:bin:mac-x64 && npm run build:bin:linux"
   },
-  "keywords": ["proxy", "fastify", "anthropic"],
+  "keywords": ["claude", "anthropic", "proxy", "token", "optimizer", "cost"],
   "author": "Pruner Team",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "dependencies": {
-    "fastify": "^4.26.0",
     "@fastify/http-proxy": "^9.5.0",
+    "chalk": "^5.4.1",
+    "fastify": "^4.26.0",
+    "tiktoken": "^1.0.21",
     "undici": "^6.6.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.17",
-    "typescript": "^5.3.3",
-    "tsx": "^4.7.0",
-    "vitest": "^1.2.2",
-    "eslint": "^8.56.0",
-    "@typescript-eslint/parser": "^6.21.0",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "prettier": "^3.2.5"
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.2"
   }
 }

@@ -1,0 +1,75 @@
+// Copyright (c) 2026 OneGoToAI. All Rights Reserved.
+// Proprietary and confidential. Unauthorized use prohibited.
+
+import { getConfig } from '../config.js';
+
+export interface SessionStats {
+  requests: number;
+  origTokens: number;
+  compTokens: number;
+  /** Cost saved by context pruning / truncation */
+  pruneSavedCost: number;
+  /** Tokens served from Anthropic's prompt cache (cache_read_input_tokens) */
+  cacheHitTokens: number;
+  /** Cost saved by cache hits (price diff: input - cache_read) */
+  cacheHitSavedCost: number;
+  /** Combined savings */
+  savedCost: number;
+  startedAt: Date;
+}
+
+const stats: SessionStats = {
+  requests: 0,
+  origTokens: 0,
+  compTokens: 0,
+  pruneSavedCost: 0,
+  cacheHitTokens: 0,
+  cacheHitSavedCost: 0,
+  savedCost: 0,
+  startedAt: new Date(),
+};
+
+export interface RequestMetrics {
+  origTokens: number;
+  compTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+export function recordRequest(metrics: RequestMetrics): void {
+  const { pricing } = getConfig();
+
+  const prunedTokens = Math.max(0, metrics.origTokens - metrics.compTokens);
+  const pruneSaved = (prunedTokens / 1_000_000) * pricing.inputPerMillion;
+
+  const cacheHitSaved =
+    (metrics.cacheReadTokens / 1_000_000) *
+    (pricing.inputPerMillion - pricing.cacheReadPerMillion);
+
+  const cacheWriteExtra =
+    (metrics.cacheCreationTokens / 1_000_000) *
+    (pricing.cacheWritePerMillion - pricing.inputPerMillion);
+
+  stats.requests++;
+  stats.origTokens += metrics.origTokens;
+  stats.compTokens += metrics.compTokens;
+  stats.pruneSavedCost += pruneSaved;
+  stats.cacheHitTokens += metrics.cacheReadTokens;
+  stats.cacheHitSavedCost += Math.max(0, cacheHitSaved - cacheWriteExtra);
+  stats.savedCost = stats.pruneSavedCost + stats.cacheHitSavedCost;
+}
+
+export function getStats(): Readonly<SessionStats> {
+  return { ...stats };
+}
+
+export function resetSession(): void {
+  stats.requests = 0;
+  stats.origTokens = 0;
+  stats.compTokens = 0;
+  stats.pruneSavedCost = 0;
+  stats.cacheHitTokens = 0;
+  stats.cacheHitSavedCost = 0;
+  stats.savedCost = 0;
+  stats.startedAt = new Date();
+}

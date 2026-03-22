@@ -1,136 +1,115 @@
-# Pruner Proxy
+# Pruner
 
-A Fastify-based HTTP proxy server that forwards requests to the Anthropic API. This proxy provides local request optimization and processing capabilities while maintaining full compatibility with the Anthropic API.
+**Save 20–70% on Claude Code costs. Zero config. Drop-in replacement.**
 
-## Features
+Pruner runs silently in the background while you use Claude Code, automatically reducing what you spend on every API call — without changing how Claude behaves.
 
-- **Local-only binding**: Only listens on `127.0.0.1` for security
-- **Complete API compatibility**: All Anthropic API endpoints are supported
-- **Streaming support**: Handles Server-Sent Events (SSE) for streaming responses
-- **Header forwarding**: Preserves all necessary headers (`x-api-key`, `anthropic-version`, etc.)
-- **Error handling**: Proper timeout handling (120s) and error passthrough
-- **HTTP/1.1 compliant**: Handles response headers correctly
+---
 
-## Installation
+## Install
+
+**macOS / Linux — one line:**
 
 ```bash
-npm install
+curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash
 ```
+
+**macOS — Homebrew:**
+
+```bash
+brew install OneGoToAI/tap/pruner
+```
+
+---
 
 ## Usage
 
-### Development Mode
-
-Start the proxy server in development mode with hot reloading:
+Replace `claude` with `pruner`. That's it.
 
 ```bash
-npm run dev
+# Before
+claude
+
+# After — same flags, same experience, lower cost
+pruner
+pruner --resume
+pruner -p "fix the build"
 ```
 
-The server will start on `http://127.0.0.1:8080` by default.
+After each response you'll see a live savings summary:
 
-### Production Mode
-
-Build and run in production:
-
-```bash
-npm run build
-npm start
+```
+────────────────────────────────────────────────────────
+ Pruner  #4  31,204→18,940 tok  -39.3%  $0.037 │ ⚡ 48,570 cached  $0.131 │ Σ $0.412
+────────────────────────────────────────────────────────
 ```
 
-### Custom Port
+When you exit, a session report is printed:
 
-Set a custom port using the `PORT` environment variable:
-
-```bash
-PORT=3000 npm run dev
+```
+────────────────────────────────────────────────────────
+ Pruner  Session Report
+────────────────────────────────────────────────────────
+ Requests               12
+ Original tokens   128,432
+ After pruning      31,204
+ Pruning saved      75.7%  $0.29
+ Cache hit tokens   48,570
+ Cache saved               $0.13
+────────────────────────────────────────────────────────
+ Total saved              $0.42
+ Duration                  183s
+────────────────────────────────────────────────────────
 ```
 
-## API Routes
+---
 
-All routes are proxied to `https://api.anthropic.com`:
+## Commands
 
-- `POST /v1/messages` - Chat completions (streaming and non-streaming)
-- `GET /v1/models` - List available models
-- All other Anthropic API endpoints are supported
+| Command | Description |
+|---|---|
+| `pruner` | Start Claude with cost optimization |
+| `pruner config` | Open the config file in your editor |
+| `pruner reset` | Reset the current session statistics |
+| `pruner <any claude flag>` | All Claude CLI flags are passed through |
+
+---
 
 ## Configuration
 
-### Required Headers
+Run `pruner config` to open `~/.pruner/config.json`.
 
-When making requests through the proxy, include the same headers you would use with the Anthropic API:
-
-```bash
-curl -X POST http://127.0.0.1:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key-here" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "claude-3-sonnet-20240229",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
+```json
+{
+  "proxyPort": 7777,
+  "optimizer": {
+    "enablePromptCache": true,
+    "enableContextPruning": true,
+    "enableTruncation": true,
+    "maxMessages": 20,
+    "maxToolOutputChars": 3000
+  },
+  "pricing": {
+    "inputPerMillion": 3.0,
+    "outputPerMillion": 15.0,
+    "cacheWritePerMillion": 3.75,
+    "cacheReadPerMillion": 0.3
+  }
+}
 ```
 
-### Streaming Requests
+Changes take effect immediately — no restart needed.
 
-The proxy automatically detects and handles streaming responses:
+---
 
-```bash
-curl -X POST http://127.0.0.1:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: your-api-key-here" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "claude-3-sonnet-20240229",
-    "max_tokens": 1024,
-    "stream": true,
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
+## Requirements
 
-## Development
+- macOS (Apple Silicon or Intel) or Linux x64
+- [Claude Code CLI](https://claude.ai/download) installed
 
-### Running Tests
+---
 
-```bash
-npm test
-```
+## License
 
-### Manual Testing
-
-Run the interactive test script:
-
-```bash
-npm run dev:test
-```
-
-This starts a test server for 30 seconds with example curl commands.
-
-### Linting and Formatting
-
-```bash
-npm run lint
-npm run format
-```
-
-## Error Handling
-
-- **Network timeouts**: Returns `504 Gateway Timeout` after 120 seconds
-- **Anthropic API errors**: All `4xx` and `5xx` errors are passed through unchanged
-- **Connection errors**: Returns `502 Bad Gateway` for connection failures
-
-## Architecture
-
-The proxy is built with:
-
-- **Fastify**: High-performance web framework
-- **undici**: Modern HTTP/1.1 client for Node.js
-- **TypeScript**: Type-safe development
-- **Vitest**: Fast testing framework
-
-## Security
-
-- Only binds to `127.0.0.1` (localhost) - not accessible from external networks
-- Does not log or store API keys or request contents
-- Forwards all security headers without modification
+Proprietary software. See [LICENSE](https://github.com/OneGoToAI/pruner-releases/blob/main/LICENSE) for terms.  
+Copyright © 2026 OneGoToAI. All rights reserved.

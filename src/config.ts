@@ -1,3 +1,7 @@
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+
 export interface Config {
   port: number;
   host: string;
@@ -16,22 +20,67 @@ export interface Config {
   };
 }
 
+const DEFAULT_CONFIG: Config = {
+  port: 7777,
+  host: '127.0.0.1',
+  logLevel: 'info',
+  database: {
+    path: path.join(os.homedir(), '.pruner', 'pruner.db')
+  },
+  optimizer: {
+    cacheEnabled: true,
+    maxTokens: 4096,
+    pruningThreshold: 0.8
+  },
+  upstream: {
+    url: 'https://api.anthropic.com',
+    apiKey: ''
+  }
+};
+
+function getConfigPath(): string {
+  return path.join(os.homedir(), '.pruner', 'config.json');
+}
+
+function ensureConfigDirectory(): void {
+  const configDir = path.join(os.homedir(), '.pruner');
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+}
+
 export function loadConfig(): Config {
-  return {
-    port: parseInt(process.env.PRUNER_PORT || '3000', 10),
-    host: process.env.PRUNER_HOST || '0.0.0.0',
-    logLevel: process.env.PRUNER_LOG_LEVEL || 'info',
-    database: {
-      path: process.env.PRUNER_DB_PATH || './pruner.db'
-    },
-    optimizer: {
-      cacheEnabled: process.env.PRUNER_CACHE_ENABLED === 'true' || true,
-      maxTokens: parseInt(process.env.PRUNER_MAX_TOKENS || '4096', 10),
-      pruningThreshold: parseFloat(process.env.PRUNER_PRUNING_THRESHOLD || '0.8')
-    },
-    upstream: {
-      url: process.env.PRUNER_UPSTREAM_URL || 'https://api.openai.com',
-      apiKey: process.env.PRUNER_UPSTREAM_API_KEY || ''
-    }
-  };
+  const configPath = getConfigPath();
+
+  // Ensure config directory exists
+  ensureConfigDirectory();
+
+  // If config file doesn't exist, create it with default values
+  if (!fs.existsSync(configPath)) {
+    fs.writeFileSync(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2));
+    return { ...DEFAULT_CONFIG };
+  }
+
+  try {
+    const configData = fs.readFileSync(configPath, 'utf8');
+    const config = JSON.parse(configData) as Config;
+
+    // Merge with defaults to handle missing properties
+    return {
+      ...DEFAULT_CONFIG,
+      ...config,
+      database: { ...DEFAULT_CONFIG.database, ...config.database },
+      optimizer: { ...DEFAULT_CONFIG.optimizer, ...config.optimizer },
+      upstream: { ...DEFAULT_CONFIG.upstream, ...config.upstream }
+    };
+  } catch (error) {
+    console.error('Error reading config file, using defaults:', error);
+    return { ...DEFAULT_CONFIG };
+  }
+}
+
+export function saveConfig(config: Config): void {
+  const configPath = getConfigPath();
+  ensureConfigDirectory();
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }

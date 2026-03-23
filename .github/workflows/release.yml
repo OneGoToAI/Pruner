@@ -112,7 +112,34 @@ jobs:
             pruner-linux-x64
             checksums.txt
 
-  # ── 3. Auto-update Homebrew Tap (opt-in) ─────────────────────────────────────
+  # ── 3. Update landing page version badge ─────────────────────────────────────
+  update-landing-page:
+    name: Update landing page version
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version
+        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+
+      - name: Bump version badge in index.html
+        run: |
+          sed -i "s/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]* — available now/${{ env.tag }} — available now/" docs/index.html
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --staged --quiet || git commit -m "chore: update landing page to ${{ env.tag }}"
+          git push
+
+  # ── 4. Auto-update Homebrew Tap (opt-in) ─────────────────────────────────────
   #
   # Enable by setting repo variable: UPDATE_HOMEBREW_TAP = true
   # Required secret: TAP_DEPLOY_TOKEN (write access to OneGoToAI/homebrew-tap)

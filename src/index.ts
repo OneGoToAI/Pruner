@@ -3,9 +3,9 @@
 // Licensed under the MIT License. See LICENSE in the project root.
 
 import { spawn, execSync } from 'child_process';
-import { existsSync } from 'fs';
 import net from 'net';
 import chalk from 'chalk';
+import Table from 'cli-table3';
 import { initConfig, getConfig, getConfigFilePath } from './config.js';
 import { startProxy, setDebugMode } from './proxy.js';
 import { getStats, resetSession } from './stats/session.js';
@@ -42,47 +42,52 @@ function printFinalReport(): void {
     ? (prunedTokens / stats.origTokens * 100).toFixed(1)
     : '0.0';
 
-  const W = 52;
-  const bar  = chalk.dim('─'.repeat(W));
-  const row  = (label: string, value: string) =>
-    ` ${chalk.dim(label.padEnd(22))}${chalk.white(value.padStart(W - 24))}`;
-
-  // Show whether savings figures are verified by Anthropic API or estimated
   const allVerified = stats.verifiedRequests === stats.requests;
   const someVerified = stats.verifiedRequests > 0;
-  const verifiedLabel = allVerified
-    ? chalk.dim(' ✓ verified')
+  const verifiedBadge = allVerified
+    ? chalk.green('✓ verified')
     : someVerified
-      ? chalk.dim(` ~${stats.verifiedRequests}/${stats.requests} verified`)
-      : chalk.dim(' ~estimated');
+      ? chalk.dim(`~${stats.verifiedRequests}/${stats.requests} verified`)
+      : chalk.dim('~ estimated');
 
-  const rows: string[] = [
-    '',
-    bar,
-    ` ${chalk.bold.green('Pruner')}  ${chalk.bold('Session Report')}${verifiedLabel}`,
-    bar,
-    row('Requests',         String(stats.requests)),
-    row('Original tokens',  stats.origTokens.toLocaleString('en-US')),
-    row('After pruning',    stats.compTokens.toLocaleString('en-US')),
-    row('Pruning saved',    `${prunePct}%  $${stats.pruneSavedCost.toFixed(4)}`),
-  ];
+  const table = new Table({
+    head: [
+      chalk.bold.green('Pruner') + chalk.dim('  ·  Session Report'),
+      verifiedBadge,
+    ],
+    style: {
+      head: [],
+      border: ['dim'],
+    },
+    chars: {
+      top: '─', 'top-mid': '┬', 'top-left': '╭', 'top-right': '╮',
+      bottom: '─', 'bottom-mid': '┴', 'bottom-left': '╰', 'bottom-right': '╯',
+      left: '│', 'left-mid': '├', mid: '─', 'mid-mid': '┼',
+      right: '│', 'right-mid': '┤', middle: '│',
+    },
+    colWidths: [28, 24],
+  });
+
+  table.push(
+    [chalk.dim('Requests'),        chalk.white(String(stats.requests))],
+    [chalk.dim('Original tokens'), chalk.white(stats.origTokens.toLocaleString('en-US'))],
+    [chalk.dim('After pruning'),   chalk.white(stats.compTokens.toLocaleString('en-US'))],
+    [chalk.dim('Pruning saved'),   chalk.green(`↓${prunePct}%`) + chalk.dim('  ') + chalk.yellow(`$${stats.pruneSavedCost.toFixed(4)}`)],
+  );
 
   if (stats.cacheHitTokens > 0) {
-    rows.push(
-      row('Cache hit tokens', stats.cacheHitTokens.toLocaleString('en-US') + chalk.dim(' ✓')),
-      row('Cache saved',      `$${stats.cacheHitSavedCost.toFixed(4)}`),
+    table.push(
+      [chalk.dim('Cache hit tokens'), chalk.magenta(stats.cacheHitTokens.toLocaleString('en-US')) + chalk.green(' ✓')],
+      [chalk.dim('Cache saved'),      chalk.yellow(`$${stats.cacheHitSavedCost.toFixed(4)}`)],
     );
   }
 
-  rows.push(
-    bar,
-    row('Total saved',      chalk.bold.yellow(`$${stats.savedCost.toFixed(4)}`)),
-    row('Duration',         `${duration}s`),
-    bar,
-    '',
+  table.push(
+    [chalk.bold('Total saved'), chalk.bold.yellow(`$${stats.savedCost.toFixed(4)}`)],
+    [chalk.dim('Duration'),     chalk.white(`${duration}s`)],
   );
 
-  process.stderr.write(rows.join('\n'));
+  process.stderr.write('\n' + table.toString() + '\n\n');
 }
 
 async function main(): Promise<void> {

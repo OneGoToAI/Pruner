@@ -1,7 +1,25 @@
 // Copyright (c) 2026 OneGoToAI. All Rights Reserved.
 // Licensed under the MIT License. See LICENSE in the project root.
 
-import { getConfig } from '../config.js';
+import { appendFileSync, mkdirSync, existsSync } from 'fs';
+import { getConfig, getConfigDir } from '../config.js';
+
+let sessionLogPath: string | null = null;
+
+function getSessionLogPath(): string {
+  if (!sessionLogPath) {
+    const dir = getConfigDir();
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    sessionLogPath = `${dir}/session.log`;
+  }
+  return sessionLogPath;
+}
+
+export function appendSessionLog(line: string): void {
+  try {
+    appendFileSync(getSessionLogPath(), line + '\n', 'utf-8');
+  } catch { /* best-effort, never crash the proxy */ }
+}
 
 export interface SessionStats {
   requests: number;

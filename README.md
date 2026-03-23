@@ -223,6 +223,7 @@ Run `pruner config` to open `~/.pruner/config.json`. Changes take effect immedia
 | `enableContextPruning` | `true` | Trim old messages past `maxMessages`. |
 | `enableTruncation` | `true` | Cap individual tool outputs at `maxToolOutputChars`. |
 | `accurateTokenCounting` | `true` | Use Anthropic's `count_tokens` API for exact figures. |
+| `quiet` | `false` | Suppress per-request inline output. Stats are written to `~/.pruner/session.log` instead. Recommended when Claude Code's TUI feels cluttered. |
 | `maxMessages` | `20` | Maximum messages to keep. First message is always preserved. |
 | `maxToolOutputChars` | `3000` | Characters per tool result before truncation. |
 | `pricing.*` | claude-3-5-sonnet rates | Override if you use different models or have custom pricing. |

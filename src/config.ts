@@ -18,6 +18,12 @@ export interface OptimizerConfig {
    * verifiably accurate. Disable if you want to avoid the extra API call.
    */
   accurateTokenCounting: boolean;
+  /**
+   * When true, per-request stats are written only to ~/.pruner/session.log
+   * and are not printed to stderr inline. The startup banner and final session
+   * report are unaffected. Recommended when Claude Code's TUI is in use.
+   */
+  quiet: boolean;
 }
 
 export interface PricingConfig {
@@ -45,6 +51,7 @@ const DEFAULT_CONFIG: PrunerConfig = {
     maxMessages: 20,
     maxToolOutputChars: 3000,
     accurateTokenCounting: true,
+    quiet: false,
   },
   pricing: {
     inputPerMillion: 3.0,

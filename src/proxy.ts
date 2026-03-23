@@ -8,7 +8,7 @@ import boxen from 'boxen';
 import { getConfig } from './config.js';
 import { optimize } from './optimizer/index.js';
 import { countTokens, fetchExactTokenCount } from './stats/counter.js';
-import { recordRequest, getStats, type RequestMetrics } from './stats/session.js';
+import { recordRequest, getStats, appendSessionLog, type RequestMetrics } from './stats/session.js';
 
 // Set to true via setDebugMode() when --debug flag is passed
 let debugMode = false;
@@ -317,19 +317,36 @@ export class AnthropicProxy implements ProxyServer {
     const { origTokens, compTokens, cacheReadTokens, origVerified, compVerified } = metrics;
     const savedTokens = origTokens - compTokens;
     const savePct = origTokens > 0 ? (savedTokens / origTokens) * 100 : 0;
-    const { pricing } = getConfig();
+    const { pricing, optimizer } = getConfig();
     const pruneSaved = (savedTokens / 1_000_000) * pricing.inputPerMillion;
     const stats = getStats();
 
     // ✓ = verified by Anthropic API  ~ = tiktoken estimate
+    const verifiedBadge = (origVerified && compVerified) ? '✓' : '~';
+
+    // Build plain-text log line (written to session.log regardless of quiet mode)
+    const plainParts: string[] = [`req #${stats.requests}`];
+    if (savedTokens > 0) {
+      plainParts.push(`${formatNumber(origTokens)} → ${formatNumber(compTokens)} tok ${verifiedBadge} ↓${savePct.toFixed(1)}% saved $${pruneSaved.toFixed(4)}`);
+    } else {
+      plainParts.push(`${formatNumber(origTokens)} tok ${verifiedBadge}`);
+    }
+    if (cacheReadTokens > 0) {
+      const cacheSaved = (cacheReadTokens / 1_000_000) * (pricing.inputPerMillion - pricing.cacheReadPerMillion);
+      plainParts.push(`⚡ ${formatNumber(cacheReadTokens)} cached $${cacheSaved.toFixed(4)}`);
+    } else if (clientCacheDetected) {
+      plainParts.push('⚡ cache warming…');
+    }
+    plainParts.push(`total saved $${stats.savedCost.toFixed(4)}`);
+    appendSessionLog(`[${new Date().toISOString()}] ${plainParts.join('  ·  ')}`);
+
+    // In quiet mode, skip inline stderr output — stats are in ~/.pruner/session.log
+    if (optimizer.quiet) return;
+
+    // Inline output (coloured)
     const badge = (origVerified && compVerified) ? chalk.green('✓') : chalk.dim('~');
-
     const parts: string[] = [];
-
-    // Request number
     parts.push(chalk.bold.cyan(`req #${stats.requests}`));
-
-    // Token savings
     if (savedTokens > 0) {
       parts.push(
         chalk.white(`${formatNumber(origTokens)}`) +
@@ -345,8 +362,6 @@ export class AnthropicProxy implements ProxyServer {
     } else {
       parts.push(chalk.dim(`${formatNumber(origTokens)} tok `) + badge);
     }
-
-    // Cache hit savings — always verified (from Anthropic response)
     if (cacheReadTokens > 0) {
       const cacheSaved =
         (cacheReadTokens / 1_000_000) * (pricing.inputPerMillion - pricing.cacheReadPerMillion);
@@ -359,13 +374,11 @@ export class AnthropicProxy implements ProxyServer {
     } else if (clientCacheDetected) {
       parts.push(chalk.dim('⚡ cache warming…'));
     }
-
-    // Running total
     parts.push(chalk.dim('total saved ') + chalk.bold.yellow(`$${stats.savedCost.toFixed(4)}`));
 
     const content = parts.join(chalk.dim('  ·  '));
     const prefix = chalk.dim('╰─ ') + chalk.bold.green('Pruner') + chalk.dim(' ─╼  ');
-    process.stderr.write(`\n${prefix}${content}\n`);
+    process.stderr.write(`${prefix}${content}\n`);
   }
 
   async start(): Promise<void> {
@@ -380,7 +393,7 @@ export class AnthropicProxy implements ProxyServer {
 export async function startProxy(port: number): Promise<() => Promise<void>> {
   const proxy = new AnthropicProxy(port);
   await proxy.start();
-  const { accurateTokenCounting } = getConfig().optimizer;
+  const { accurateTokenCounting, quiet } = getConfig().optimizer;
 
   const lines: string[] = [
     chalk.bold.green('Pruner') +
@@ -391,6 +404,10 @@ export async function startProxy(port: number): Promise<() => Promise<void>> {
 
   if (accurateTokenCounting) {
     lines.push(chalk.dim('Token counts ') + chalk.green('✓ verified') + chalk.dim(' via Anthropic API'));
+  }
+
+  if (quiet) {
+    lines.push(chalk.dim('Quiet mode — per-request stats → ') + chalk.dim('~/.pruner/session.log'));
   }
 
   if (debugMode) {

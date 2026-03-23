@@ -4,6 +4,7 @@
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { request as undiciRequest } from 'undici';
 import chalk from 'chalk';
+import boxen from 'boxen';
 import { getConfig } from './config.js';
 import { optimize } from './optimizer/index.js';
 import { countTokens, fetchExactTokenCount } from './stats/counter.js';
@@ -209,7 +210,10 @@ export class AnthropicProxy implements ProxyServer {
           value !== undefined &&
           lowerKey !== 'content-length' &&
           lowerKey !== 'transfer-encoding' &&
-          lowerKey !== 'connection'
+          lowerKey !== 'connection' &&
+          // undici auto-decompresses the body; strip content-encoding so the
+          // client doesn't try to decompress the already-decoded bytes again.
+          lowerKey !== 'content-encoding'
         ) {
           reply.header(key, value);
         }
@@ -317,46 +321,51 @@ export class AnthropicProxy implements ProxyServer {
     const pruneSaved = (savedTokens / 1_000_000) * pricing.inputPerMillion;
     const stats = getStats();
 
-    // ✓ = verified by Anthropic API  ~= tiktoken estimate
-    const tokBadge = (origVerified && compVerified)
-      ? chalk.dim('✓')
-      : chalk.dim('~');
+    // ✓ = verified by Anthropic API  ~ = tiktoken estimate
+    const badge = (origVerified && compVerified) ? chalk.green('✓') : chalk.dim('~');
 
-    const cols: string[] = [];
-    cols.push(chalk.bold.cyan(`#${stats.requests}`));
+    const parts: string[] = [];
 
+    // Request number
+    parts.push(chalk.bold.cyan(`req #${stats.requests}`));
+
+    // Token savings
     if (savedTokens > 0) {
-      cols.push(
-        chalk.cyan(`${formatNumber(origTokens)}→${formatNumber(compTokens)} tok`) +
-        tokBadge +
-        chalk.green(` -${savePct.toFixed(1)}%`) +
-        chalk.yellow(` $${pruneSaved.toFixed(4)}`),
+      parts.push(
+        chalk.white(`${formatNumber(origTokens)}`) +
+        chalk.dim(' → ') +
+        chalk.white(`${formatNumber(compTokens)}`) +
+        chalk.dim(' tok ') +
+        badge +
+        chalk.dim('  ') +
+        chalk.bold.green(`↓${savePct.toFixed(1)}%`) +
+        chalk.dim('  ') +
+        chalk.yellow(`saved $${pruneSaved.toFixed(4)}`),
       );
     } else {
-      cols.push(chalk.dim(`${formatNumber(origTokens)} tok`) + tokBadge);
+      parts.push(chalk.dim(`${formatNumber(origTokens)} tok `) + badge);
     }
 
     // Cache hit savings — always verified (from Anthropic response)
     if (cacheReadTokens > 0) {
       const cacheSaved =
         (cacheReadTokens / 1_000_000) * (pricing.inputPerMillion - pricing.cacheReadPerMillion);
-      cols.push(
-        chalk.magenta(`⚡ ${formatNumber(cacheReadTokens)} cached`) +
-        chalk.dim('✓') +
-        chalk.yellow(` $${cacheSaved.toFixed(4)}`),
+      parts.push(
+        chalk.magenta('⚡ ') +
+        chalk.magenta(`${formatNumber(cacheReadTokens)} cached`) +
+        chalk.dim('  ') +
+        chalk.yellow(`$${cacheSaved.toFixed(4)}`),
       );
     } else if (clientCacheDetected) {
-      cols.push(chalk.dim('⚡ cache pending'));
+      parts.push(chalk.dim('⚡ cache warming…'));
     }
 
-    cols.push(chalk.gray(`Σ $${stats.savedCost.toFixed(4)}`));
+    // Running total
+    parts.push(chalk.dim('total saved ') + chalk.bold.yellow(`$${stats.savedCost.toFixed(4)}`));
 
-    const SEP = chalk.dim(' │ ');
-    const bar = chalk.dim('─'.repeat(52));
-    const label = chalk.bold.green('Pruner');
-    const content = cols.join(SEP);
-
-    process.stderr.write(`\n${bar}\n ${label}  ${content}\n${bar}\n`);
+    const content = parts.join(chalk.dim('  ·  '));
+    const prefix = chalk.dim('╰─ ') + chalk.bold.green('Pruner') + chalk.dim(' ─╼  ');
+    process.stderr.write(`\n${prefix}${content}\n`);
   }
 
   async start(): Promise<void> {
@@ -371,28 +380,39 @@ export class AnthropicProxy implements ProxyServer {
 export async function startProxy(port: number): Promise<() => Promise<void>> {
   const proxy = new AnthropicProxy(port);
   await proxy.start();
-  const bar = chalk.dim('─'.repeat(52));
   const { accurateTokenCounting } = getConfig().optimizer;
 
-  let statusLine =
-    ` ${chalk.bold.green('Pruner')}  ${chalk.dim('proxy')} ${chalk.white(`→ 127.0.0.1:${port}`)}  ` +
-    chalk.dim('optimizing your Claude requests');
+  const lines: string[] = [
+    chalk.bold.green('Pruner') +
+      chalk.dim('  ·  proxy running  ·  ') +
+      chalk.white(`127.0.0.1:${port}`),
+    chalk.dim('Optimizing context and reducing Claude API costs'),
+  ];
 
   if (accurateTokenCounting) {
-    statusLine += chalk.dim('  [verified ✓]');
+    lines.push(chalk.dim('Token counts ') + chalk.green('✓ verified') + chalk.dim(' via Anthropic API'));
   }
 
-  process.stderr.write(`${bar}\n${statusLine}\n`);
-
   if (debugMode) {
-    process.stderr.write(
-      ` ${chalk.yellow('debug mode')}  ` +
-      chalk.dim('only connects to: ') + chalk.white('api.anthropic.com:443') + '\n' +
-      ` ${chalk.dim('verify:')}        ` +
-      chalk.dim('sudo lsof -i -n -P | grep pruner') + '\n',
+    lines.push('');
+    lines.push(
+      chalk.yellow('⚠ debug mode') +
+      chalk.dim('  only connects to ') +
+      chalk.white('api.anthropic.com:443'),
+    );
+    lines.push(
+      chalk.dim('  verify: ') +
+      chalk.dim('sudo lsof -i -n -P | grep pruner'),
     );
   }
 
-  process.stderr.write(`${bar}\n`);
+  process.stderr.write('\n' + boxen(lines.join('\n'), {
+    padding: { top: 0, bottom: 0, left: 1, right: 2 },
+    borderStyle: 'round',
+    borderColor: 'green',
+    title: ' ready ',
+    titleAlignment: 'right',
+  }) + '\n\n');
+
   return () => proxy.stop();
 }

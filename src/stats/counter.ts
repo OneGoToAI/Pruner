@@ -2,7 +2,7 @@
 // Licensed under the MIT License. See LICENSE in the project root.
 
 import { request as undiciRequest } from 'undici';
-import { get_encoding, type Tiktoken } from 'tiktoken';
+import { getEncoding, type Tiktoken } from 'js-tiktoken';
 
 let encoder: Tiktoken | null = null;
 let encoderFailed = false;
@@ -11,7 +11,7 @@ function getEncoder(): Tiktoken | null {
   if (encoderFailed) return null;
   if (encoder) return encoder;
   try {
-    encoder = get_encoding('cl100k_base');
+    encoder = getEncoding('cl100k_base');
     return encoder;
   } catch (err) {
     process.stderr.write(`[Pruner] tiktoken init failed, falling back to char estimation: ${err}\n`);

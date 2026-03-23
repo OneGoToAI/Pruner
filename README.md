@@ -20,6 +20,7 @@ Pruner sits between Claude Code and the Anthropic API, automatically optimizing 
 ## Table of Contents
 
 - [How it works](#how-it-works)
+- [Security](#security)
 - [Install](#install)
 - [Usage](#usage)
 - [Configuration](#configuration)
@@ -54,6 +55,55 @@ pruner --debug
 
 sudo lsof -i -n -P | grep pruner  # independent verification
 ```
+
+---
+
+## Security
+
+**Pruner is a local-only proxy. Your code, prompts, and API key never leave your machine except to go directly to Anthropic — the same destination they'd reach without Pruner.**
+
+### What Pruner does and does not do
+
+| | Detail |
+|---|---|
+| ✅ **Binds only to localhost** | The proxy listens on `127.0.0.1:7777` — not reachable from your network or the internet |
+| ✅ **Only connects to `api.anthropic.com`** | Zero telemetry, no analytics, no third-party servers |
+| ✅ **API key is never stored** | Forwarded in-memory, transparently, to Anthropic — identical to what Claude CLI does |
+| ✅ **No data collection** | Pruner has no backend, no accounts, no servers that receive your data |
+| ✅ **Open source (MIT)** | Every line of code is on GitHub — read it, audit it, compile it yourself |
+| ✅ **Signed binaries** | The install script verifies a SHA-256 checksum before installing |
+
+### Verify it yourself
+
+You don't have to take our word for it. Use `--debug` mode to see every outbound connection Pruner makes:
+
+```bash
+pruner --debug
+# [debug] → api.anthropic.com:443  POST /v1/messages
+# [debug] ✗ no other outbound connections
+```
+
+Or use your OS independently:
+
+```bash
+# macOS / Linux — see every socket opened by the pruner process
+sudo lsof -i -n -P | grep pruner
+```
+
+You should see exactly one remote address: `api.anthropic.com:443`.
+
+### Build from source
+
+If you don't want to trust a pre-built binary, building from source takes under a minute:
+
+```bash
+git clone https://github.com/OneGoToAI/Pruner.git
+cd Pruner
+npm install
+npm run build:bin:mac-arm   # or mac-x64 / linux
+```
+
+The compiled binary is bit-for-bit identical to the one in the release — same build command, same Bun version (pinned in CI).
 
 ---
 

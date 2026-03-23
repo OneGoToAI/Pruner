@@ -12,24 +12,14 @@ permissions:
   contents: read
 
 jobs:
-  # ── 1. Build one binary per platform ────────────────────────────────────────
+  # ── 1. Build all binaries via cross-compilation on a single runner ───────────
+  #
+  # Bun supports cross-compilation with --target, so we compile all three
+  # platform binaries from a single ubuntu-latest runner. This avoids needing
+  # macOS runners (macos-13 is deprecated; macos-latest is arm64-only).
   build:
-    name: Build ${{ matrix.artifact }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest   # Apple Silicon runner
-            target: bun-darwin-arm64
-            artifact: pruner-darwin-arm64
-          - os: macos-13       # Intel runner
-            target: bun-darwin-x64
-            artifact: pruner-darwin-x64
-          - os: ubuntu-latest
-            target: bun-linux-x64
-            artifact: pruner-linux-x64
-
-    runs-on: ${{ matrix.os }}
+    name: Build all binaries
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -41,32 +31,28 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Build binary
+      - name: Build binaries (cross-compile all targets)
         run: |
-          bun build --compile --target=${{ matrix.target }} src/index.ts \
-            --outfile ${{ matrix.artifact }}
+          bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile pruner-darwin-arm64
+          bun build --compile --target=bun-darwin-x64   src/index.ts --outfile pruner-darwin-x64
+          bun build --compile --target=bun-linux-x64    src/index.ts --outfile pruner-linux-x64
 
-      - name: Compute SHA-256
-        id: sha
-        shell: bash
+      - name: Compute SHA-256 checksums
         run: |
-          if command -v sha256sum &>/dev/null; then
-            HASH=$(sha256sum "${{ matrix.artifact }}" | awk '{print $1}')
-          else
-            HASH=$(shasum -a 256 "${{ matrix.artifact }}" | awk '{print $1}')
-          fi
-          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
-          echo "$HASH  ${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
+          sha256sum pruner-darwin-arm64 | awk '{print $1 "  pruner-darwin-arm64"}' > pruner-darwin-arm64.sha256
+          sha256sum pruner-darwin-x64   | awk '{print $1 "  pruner-darwin-x64"}'   > pruner-darwin-x64.sha256
+          sha256sum pruner-linux-x64    | awk '{print $1 "  pruner-linux-x64"}'    > pruner-linux-x64.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}.sha256
-          path: ${{ matrix.artifact }}.sha256
+          name: binaries
+          path: |
+            pruner-darwin-arm64
+            pruner-darwin-x64
+            pruner-linux-x64
+            pruner-darwin-arm64.sha256
+            pruner-darwin-x64.sha256
+            pruner-linux-x64.sha256
 
   # ── 2. Publish to the PUBLIC pruner-releases repo ───────────────────────────
   #
@@ -89,7 +75,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          merge-multiple: true
+          name: binaries
 
       - name: Make binaries executable
         run: chmod +x pruner-darwin-arm64 pruner-darwin-x64 pruner-linux-x64
@@ -162,7 +148,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          merge-multiple: true
+          name: binaries
 
       - name: Compute values
         run: |

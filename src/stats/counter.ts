@@ -1,6 +1,7 @@
 // Copyright (c) 2026 OneGoToAI. All Rights Reserved.
 // Proprietary and confidential. Unauthorized use prohibited.
 
+import { request as undiciRequest } from 'undici';
 import { get_encoding, type Tiktoken } from 'tiktoken';
 
 let encoder: Tiktoken | null = null;
@@ -26,6 +27,56 @@ export function countTokensText(text: string): number {
   }
   // Fallback: ~4 chars per token (rough estimate, error < 20%)
   return Math.ceil(text.length / 4);
+}
+
+/**
+ * Call Anthropic's /v1/messages/count_tokens endpoint to get an exact token
+ * count for the given request body.  This runs in parallel with the main
+ * request so it adds zero latency to the user's Claude session.
+ *
+ * Returns null on any error (network failure, 4xx, etc.) so callers can fall
+ * back to the tiktoken estimate without disrupting the proxy.
+ *
+ * @param body     The original (pre-optimization) request body
+ * @param headers  Auth headers from the incoming request (x-api-key / authorization,
+ *                 anthropic-version, anthropic-beta) so we can authenticate to Anthropic
+ */
+export async function fetchExactTokenCount(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  body: any,
+  headers: Record<string, string>,
+): Promise<number | null> {
+  try {
+    // Build a minimal body: model + messages + system only (no stream, no max_tokens)
+    // The count_tokens endpoint requires model and messages, ignores generation params.
+    const countBody: Record<string, unknown> = { model: body.model, messages: body.messages };
+    if (body.system !== undefined) countBody.system = body.system;
+    if (body.tools !== undefined) countBody.tools = body.tools;
+
+    const countHeaders: Record<string, string> = { 'content-type': 'application/json' };
+    for (const key of ['x-api-key', 'authorization', 'anthropic-version', 'anthropic-beta']) {
+      const val = headers[key] ?? headers[key.toLowerCase()];
+      if (val) countHeaders[key] = val;
+    }
+
+    const response = await undiciRequest(
+      'https://api.anthropic.com/v1/messages/count_tokens',
+      {
+        method: 'POST',
+        headers: countHeaders,
+        body: JSON.stringify(countBody),
+        headersTimeout: 8_000,
+        bodyTimeout: 8_000,
+      },
+    );
+
+    if (response.statusCode !== 200) return null;
+    const text = await response.body.text();
+    const json = JSON.parse(text) as { input_tokens?: number };
+    return typeof json.input_tokens === 'number' ? json.input_tokens : null;
+  } catch {
+    return null;
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

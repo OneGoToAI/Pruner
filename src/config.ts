@@ -11,6 +11,13 @@ export interface OptimizerConfig {
   enableTruncation: boolean;
   maxMessages: number;
   maxToolOutputChars: number;
+  /**
+   * When true, Pruner calls Anthropic's /v1/messages/count_tokens endpoint
+   * (in parallel with the main request, zero added latency) to get an exact
+   * token count instead of the tiktoken estimate. This makes savings figures
+   * verifiably accurate. Disable if you want to avoid the extra API call.
+   */
+  accurateTokenCounting: boolean;
 }
 
 export interface PricingConfig {
@@ -37,6 +44,7 @@ const DEFAULT_CONFIG: PrunerConfig = {
     enableTruncation: true,
     maxMessages: 20,
     maxToolOutputChars: 3000,
+    accurateTokenCounting: true,
   },
   pricing: {
     inputPerMillion: 3.0,

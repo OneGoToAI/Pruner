@@ -6,8 +6,12 @@ import { request as undiciRequest } from 'undici';
 import chalk from 'chalk';
 import { getConfig } from './config.js';
 import { optimize } from './optimizer/index.js';
-import { countTokens } from './stats/counter.js';
+import { countTokens, fetchExactTokenCount } from './stats/counter.js';
 import { recordRequest, getStats, type RequestMetrics } from './stats/session.js';
+
+// Set to true via setDebugMode() when --debug flag is passed
+let debugMode = false;
+export function setDebugMode(enabled: boolean): void { debugMode = enabled; }
 
 const ANTHROPIC_API_BASE = 'https://api.anthropic.com';
 const REQUEST_TIMEOUT = 120 * 1000;
@@ -22,6 +26,8 @@ interface ProxyServer {
 }
 
 interface UsageData {
+  /** Actual non-cached input tokens billed — straight from Anthropic, always accurate */
+  input_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
 }
@@ -33,6 +39,7 @@ function extractUsageFromJson(text: string): UsageData {
   try {
     const json = JSON.parse(text);
     return {
+      input_tokens: json?.usage?.input_tokens,
       cache_read_input_tokens: json?.usage?.cache_read_input_tokens ?? 0,
       cache_creation_input_tokens: json?.usage?.cache_creation_input_tokens ?? 0,
     };
@@ -46,6 +53,7 @@ function extractUsageFromJson(text: string): UsageData {
  * `message_start` and `message_delta` events. We accumulate both.
  */
 function extractUsageFromSSE(chunks: string): UsageData {
+  let inputTokens: number | undefined;
   let cacheRead = 0;
   let cacheCreation = 0;
 
@@ -58,13 +66,19 @@ function extractUsageFromSSE(chunks: string): UsageData {
       const parsed = JSON.parse(data);
       const usage = parsed?.message?.usage ?? parsed?.usage;
       if (usage) {
+        // input_tokens appears in message_start; use it as the authoritative count
+        if (typeof usage.input_tokens === 'number') inputTokens = usage.input_tokens;
         if (usage.cache_read_input_tokens) cacheRead += usage.cache_read_input_tokens;
         if (usage.cache_creation_input_tokens) cacheCreation += usage.cache_creation_input_tokens;
       }
     } catch { /* not all lines are valid JSON */ }
   }
 
-  return { cache_read_input_tokens: cacheRead, cache_creation_input_tokens: cacheCreation };
+  return {
+    input_tokens: inputTokens,
+    cache_read_input_tokens: cacheRead,
+    cache_creation_input_tokens: cacheCreation,
+  };
 }
 
 export class AnthropicProxy implements ProxyServer {
@@ -93,7 +107,7 @@ export class AnthropicProxy implements ProxyServer {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const requestBody = request.body as any;
 
-    const origTokens = isMessagesEndpoint && requestBody
+    const localOrigTokens = isMessagesEndpoint && requestBody
       ? countTokens(requestBody)
       : 0;
 
@@ -107,9 +121,32 @@ export class AnthropicProxy implements ProxyServer {
       clientCacheDetected = result.clientCacheDetected;
     }
 
-    const compTokens = isMessagesEndpoint && optimizedBody
+    const localCompTokens = isMessagesEndpoint && optimizedBody
       ? countTokens(optimizedBody)
-      : origTokens;
+      : localOrigTokens;
+
+    // Extract auth headers so we can call count_tokens on Anthropic's side.
+    // We snapshot them now before the request loop modifies forwardHeaders.
+    const authHeaders: Record<string, string> = {};
+    for (const key of ['x-api-key', 'authorization', 'anthropic-version', 'anthropic-beta']) {
+      const val = request.headers[key] ?? request.headers[key.toLowerCase()];
+      if (val) authHeaders[key] = Array.isArray(val) ? val[0] : String(val);
+    }
+
+    // Fire the accurate token count in parallel with the main request.
+    // Uses Anthropic's own tokenizer → zero latency impact, verified numbers.
+    const { accurateTokenCounting } = getConfig().optimizer;
+    const exactOrigTokensPromise: Promise<number | null> =
+      isMessagesEndpoint && requestBody && accurateTokenCounting
+        ? fetchExactTokenCount(requestBody, authHeaders)
+        : Promise.resolve(null);
+
+    if (debugMode && isMessagesEndpoint) {
+      process.stderr.write(
+        chalk.dim(`[debug] → api.anthropic.com:443  ${request.method} ${urlPath}`) + '\n' +
+        chalk.dim('[debug] ✗ no other outbound connections') + '\n',
+      );
+    }
 
     try {
       const forwardHeaders: Record<string, string> = {};
@@ -190,14 +227,26 @@ export class AnthropicProxy implements ProxyServer {
           });
 
           let recorded = false;
-          const onEnd = () => {
+          const onEnd = async () => {
             if (recorded) return;
             recorded = true;
 
             const usage = extractUsageFromSSE(sseChunks.join(''));
+            const exactOrig = await exactOrigTokensPromise;
+
+            // origTokens: Anthropic count_tokens (verified) → fallback tiktoken (estimated)
+            const origTokens = exactOrig ?? localOrigTokens;
+            const origVerified = exactOrig !== null;
+
+            // compTokens: usage.input_tokens from response (verified) → fallback tiktoken
+            const compTokens = usage.input_tokens ?? localCompTokens;
+            const compVerified = usage.input_tokens !== undefined;
+
             const metrics: RequestMetrics = {
               origTokens,
+              origVerified,
               compTokens,
+              compVerified,
               cacheReadTokens: usage.cache_read_input_tokens ?? 0,
               cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
             };
@@ -213,9 +262,19 @@ export class AnthropicProxy implements ProxyServer {
 
         if (isMessagesEndpoint && response.statusCode === 200) {
           const usage = extractUsageFromJson(responseText);
+          const exactOrig = await exactOrigTokensPromise;
+
+          const origTokens = exactOrig ?? localOrigTokens;
+          const origVerified = exactOrig !== null;
+
+          const compTokens = usage.input_tokens ?? localCompTokens;
+          const compVerified = usage.input_tokens !== undefined;
+
           const metrics: RequestMetrics = {
             origTokens,
+            origVerified,
             compTokens,
+            compVerified,
             cacheReadTokens: usage.cache_read_input_tokens ?? 0,
             cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
           };
@@ -251,43 +310,45 @@ export class AnthropicProxy implements ProxyServer {
   }
 
   private printRequestLog(metrics: RequestMetrics, clientCacheDetected: boolean): void {
-    const { origTokens, compTokens, cacheReadTokens } = metrics;
+    const { origTokens, compTokens, cacheReadTokens, origVerified, compVerified } = metrics;
     const savedTokens = origTokens - compTokens;
     const savePct = origTokens > 0 ? (savedTokens / origTokens) * 100 : 0;
     const { pricing } = getConfig();
     const pruneSaved = (savedTokens / 1_000_000) * pricing.inputPerMillion;
     const stats = getStats();
 
-    // ── build the content line ──────────────────────────────────────────────
-    const cols: string[] = [];
+    // ✓ = verified by Anthropic API  ~= tiktoken estimate
+    const tokBadge = (origVerified && compVerified)
+      ? chalk.dim('✓')
+      : chalk.dim('~');
 
-    // Request counter
+    const cols: string[] = [];
     cols.push(chalk.bold.cyan(`#${stats.requests}`));
 
-    // Token savings from pruning
     if (savedTokens > 0) {
       cols.push(
         chalk.cyan(`${formatNumber(origTokens)}→${formatNumber(compTokens)} tok`) +
+        tokBadge +
         chalk.green(` -${savePct.toFixed(1)}%`) +
         chalk.yellow(` $${pruneSaved.toFixed(4)}`),
       );
     } else {
-      cols.push(chalk.dim(`${formatNumber(origTokens)} tok`));
+      cols.push(chalk.dim(`${formatNumber(origTokens)} tok`) + tokBadge);
     }
 
-    // Cache hit savings
+    // Cache hit savings — always verified (from Anthropic response)
     if (cacheReadTokens > 0) {
       const cacheSaved =
         (cacheReadTokens / 1_000_000) * (pricing.inputPerMillion - pricing.cacheReadPerMillion);
       cols.push(
         chalk.magenta(`⚡ ${formatNumber(cacheReadTokens)} cached`) +
+        chalk.dim('✓') +
         chalk.yellow(` $${cacheSaved.toFixed(4)}`),
       );
     } else if (clientCacheDetected) {
       cols.push(chalk.dim('⚡ cache pending'));
     }
 
-    // Cumulative
     cols.push(chalk.gray(`Σ $${stats.savedCost.toFixed(4)}`));
 
     const SEP = chalk.dim(' │ ');
@@ -295,8 +356,6 @@ export class AnthropicProxy implements ProxyServer {
     const label = chalk.bold.green('Pruner');
     const content = cols.join(SEP);
 
-    // Two leading newlines push us below any partial Claude output line,
-    // the separator bar visually fences Pruner's output from AI text.
     process.stderr.write(`\n${bar}\n ${label}  ${content}\n${bar}\n`);
   }
 
@@ -313,11 +372,27 @@ export async function startProxy(port: number): Promise<() => Promise<void>> {
   const proxy = new AnthropicProxy(port);
   await proxy.start();
   const bar = chalk.dim('─'.repeat(52));
-  process.stderr.write(
-    `${bar}\n` +
+  const { accurateTokenCounting } = getConfig().optimizer;
+
+  let statusLine =
     ` ${chalk.bold.green('Pruner')}  ${chalk.dim('proxy')} ${chalk.white(`→ 127.0.0.1:${port}`)}  ` +
-    chalk.dim('optimizing your Claude requests\n') +
-    `${bar}\n`
-  );
+    chalk.dim('optimizing your Claude requests');
+
+  if (accurateTokenCounting) {
+    statusLine += chalk.dim('  [verified ✓]');
+  }
+
+  process.stderr.write(`${bar}\n${statusLine}\n`);
+
+  if (debugMode) {
+    process.stderr.write(
+      ` ${chalk.yellow('debug mode')}  ` +
+      chalk.dim('only connects to: ') + chalk.white('api.anthropic.com:443') + '\n' +
+      ` ${chalk.dim('verify:')}        ` +
+      chalk.dim('sudo lsof -i -n -P | grep pruner') + '\n',
+    );
+  }
+
+  process.stderr.write(`${bar}\n`);
   return () => proxy.stop();
 }

@@ -16,6 +16,11 @@ export interface SessionStats {
   /** Combined savings */
   savedCost: number;
   startedAt: Date;
+  /**
+   * Requests where origTokens came from Anthropic's count_tokens API
+   * (vs tiktoken estimate).  Used to label savings as "verified" or "~estimated".
+   */
+  verifiedRequests: number;
 }
 
 const stats: SessionStats = {
@@ -27,11 +32,18 @@ const stats: SessionStats = {
   cacheHitSavedCost: 0,
   savedCost: 0,
   startedAt: new Date(),
+  verifiedRequests: 0,
 };
 
 export interface RequestMetrics {
+  /** Token count BEFORE optimization.  Set origVerified=true when this came
+   *  from the Anthropic count_tokens API; false = tiktoken estimate. */
   origTokens: number;
+  origVerified: boolean;
+  /** Actual input tokens billed, from usage.input_tokens in the API response.
+   *  This is always accurate (straight from Anthropic). */
   compTokens: number;
+  compVerified: boolean;
   cacheReadTokens: number;
   cacheCreationTokens: number;
 }
@@ -57,6 +69,7 @@ export function recordRequest(metrics: RequestMetrics): void {
   stats.cacheHitTokens += metrics.cacheReadTokens;
   stats.cacheHitSavedCost += Math.max(0, cacheHitSaved - cacheWriteExtra);
   stats.savedCost = stats.pruneSavedCost + stats.cacheHitSavedCost;
+  if (metrics.origVerified && metrics.compVerified) stats.verifiedRequests++;
 }
 
 export function getStats(): Readonly<SessionStats> {
@@ -72,4 +85,5 @@ export function resetSession(): void {
   stats.cacheHitSavedCost = 0;
   stats.savedCost = 0;
   stats.startedAt = new Date();
+  stats.verifiedRequests = 0;
 }

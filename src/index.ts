@@ -7,7 +7,7 @@ import { existsSync } from 'fs';
 import net from 'net';
 import chalk from 'chalk';
 import { initConfig, getConfig, getConfigFilePath } from './config.js';
-import { startProxy } from './proxy.js';
+import { startProxy, setDebugMode } from './proxy.js';
 import { getStats, resetSession } from './stats/session.js';
 
 async function findAvailablePort(startPort: number): Promise<number> {
@@ -47,10 +47,19 @@ function printFinalReport(): void {
   const row  = (label: string, value: string) =>
     ` ${chalk.dim(label.padEnd(22))}${chalk.white(value.padStart(W - 24))}`;
 
+  // Show whether savings figures are verified by Anthropic API or estimated
+  const allVerified = stats.verifiedRequests === stats.requests;
+  const someVerified = stats.verifiedRequests > 0;
+  const verifiedLabel = allVerified
+    ? chalk.dim(' ✓ verified')
+    : someVerified
+      ? chalk.dim(` ~${stats.verifiedRequests}/${stats.requests} verified`)
+      : chalk.dim(' ~estimated');
+
   const rows: string[] = [
     '',
     bar,
-    ` ${chalk.bold.green('Pruner')}  ${chalk.bold('Session Report')}`,
+    ` ${chalk.bold.green('Pruner')}  ${chalk.bold('Session Report')}${verifiedLabel}`,
     bar,
     row('Requests',         String(stats.requests)),
     row('Original tokens',  stats.origTokens.toLocaleString('en-US')),
@@ -60,7 +69,7 @@ function printFinalReport(): void {
 
   if (stats.cacheHitTokens > 0) {
     rows.push(
-      row('Cache hit tokens', stats.cacheHitTokens.toLocaleString('en-US')),
+      row('Cache hit tokens', stats.cacheHitTokens.toLocaleString('en-US') + chalk.dim(' ✓')),
       row('Cache saved',      `$${stats.cacheHitSavedCost.toFixed(4)}`),
     );
   }
@@ -77,7 +86,17 @@ function printFinalReport(): void {
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+
+  // --debug is a Pruner-only flag; strip it before passing args to claude
+  const debugFlagIdx = rawArgs.indexOf('--debug');
+  const isDebug = debugFlagIdx !== -1;
+  const args = isDebug
+    ? [...rawArgs.slice(0, debugFlagIdx), ...rawArgs.slice(debugFlagIdx + 1)]
+    : rawArgs;
+
+  if (isDebug) setDebugMode(true);
+
   const configPath = getConfigFilePath();
 
   // Special subcommands — don't start claude

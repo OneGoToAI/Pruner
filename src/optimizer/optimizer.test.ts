@@ -141,6 +141,14 @@ const makeToolResultMsg = (toolContent: string) => ({
   role: 'user',
   content: [{ type: 'tool_result', tool_use_id: 'x', content: toolContent }],
 });
+const makeToolUseMsg = (id: string) => ({
+  role: 'assistant',
+  content: [{ type: 'tool_use', id, name: 'bash', input: { command: 'ls' } }],
+});
+const makeToolResultMsgWithId = (id: string, output: string) => ({
+  role: 'user',
+  content: [{ type: 'tool_result', tool_use_id: id, content: output }],
+});
 
 describe('pruneContext — message cap', () => {
   it('returns body unchanged when messages ≤ maxMessages', () => {
@@ -181,6 +189,89 @@ describe('pruneContext — message cap', () => {
     const body = { system: 'sys' };
     const result = pruneContext(body, 20, 3000);
     expect(result).toEqual(body);
+  });
+});
+
+describe('pruneContext — tool_use/tool_result pair preservation', () => {
+  it('keeps tool_use assistant message when its tool_result is at the cut boundary', () => {
+    // Build a conversation where the cut boundary falls on a user message with tool_result.
+    // messages[0]: user, [1..8]: alternating assistant/user, [9]: assistant(tool_use), [10]: user(tool_result), [11..end]: recent
+    const messages: Record<string, unknown>[] = [
+      makeMsg('user', 'initial question'),
+    ];
+    for (let i = 1; i <= 8; i++) {
+      messages.push(makeMsg(i % 2 === 1 ? 'assistant' : 'user', `msg${i}`));
+    }
+    messages.push(makeToolUseMsg('tool_A'));       // [9]  assistant with tool_use
+    messages.push(makeToolResultMsgWithId('tool_A', 'result A')); // [10] user with tool_result
+    for (let i = 11; i <= 14; i++) {
+      messages.push(makeMsg(i % 2 === 1 ? 'assistant' : 'user', `msg${i}`));
+    }
+    // 15 messages total, maxMessages=7 → initial cutStart = 15 - 6 = 9
+    // messages[9] is assistant (tool_use) — not a tool_result user, so no shift needed
+    // But if maxMessages=6 → cutStart = 15 - 5 = 10 → messages[10] is user (tool_result)
+    // Should expand back to include messages[9] (assistant with tool_use)
+    const result = pruneContext({ messages }, 6, 3000);
+
+    // The tool_use assistant message should be in the result
+    const hasToolUse = result.messages.some(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (m: any) => Array.isArray(m.content) && m.content.some((b: any) => b.type === 'tool_use' && b.id === 'tool_A'),
+    );
+    const hasToolResult = result.messages.some(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (m: any) => Array.isArray(m.content) && m.content.some((b: any) => b.type === 'tool_result' && b.tool_use_id === 'tool_A'),
+    );
+    expect(hasToolUse).toBe(true);
+    expect(hasToolResult).toBe(true);
+  });
+
+  it('handles consecutive tool pairs at the cut boundary', () => {
+    const messages: Record<string, unknown>[] = [
+      makeMsg('user', 'initial'),
+      makeMsg('assistant', 'filler1'),
+      makeMsg('user', 'filler2'),
+      makeMsg('assistant', 'filler3'),
+      makeMsg('user', 'filler4'),
+      makeMsg('assistant', 'filler5'),
+      makeMsg('user', 'filler6'),
+      makeToolUseMsg('tool_X'),                          // [7]
+      makeToolResultMsgWithId('tool_X', 'result X'),     // [8]
+      makeToolUseMsg('tool_Y'),                          // [9]
+      makeToolResultMsgWithId('tool_Y', 'result Y'),     // [10]
+      makeMsg('assistant', 'final answer'),              // [11]
+      makeMsg('user', 'thanks'),                         // [12]
+    ];
+    // 13 messages, maxMessages=4 → cutStart = 13 - 3 = 10
+    // messages[10] is user (tool_result Y) → expand to 9
+    // messages[9] is assistant (tool_use Y) → not tool_result, stop
+    const result = pruneContext({ messages }, 4, 3000);
+
+    const hasToolY = result.messages.some(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (m: any) => Array.isArray(m.content) && m.content.some((b: any) => b.id === 'tool_Y'),
+    );
+    const hasToolYResult = result.messages.some(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (m: any) => Array.isArray(m.content) && m.content.some((b: any) => b.tool_use_id === 'tool_Y'),
+    );
+    expect(hasToolY).toBe(true);
+    expect(hasToolYResult).toBe(true);
+  });
+
+  it('does not break when all messages are tool pairs and nothing can be pruned', () => {
+    const messages: Record<string, unknown>[] = [
+      makeMsg('user', 'start'),
+      makeToolUseMsg('t1'),
+      makeToolResultMsgWithId('t1', 'r1'),
+      makeToolUseMsg('t2'),
+      makeToolResultMsgWithId('t2', 'r2'),
+    ];
+    // 5 messages, maxMessages=3 → cutStart = 5 - 2 = 3
+    // messages[3] is assistant (tool_use t2), not tool_result → stop
+    // But messages[4] is user (tool_result t2), and messages[3] is kept, so pair is intact
+    const result = pruneContext({ messages }, 3, 3000);
+    expect(result.messages.length).toBeGreaterThanOrEqual(3);
   });
 });
 

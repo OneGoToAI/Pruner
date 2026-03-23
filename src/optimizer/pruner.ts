@@ -12,26 +12,47 @@ type AnthropicBody = Record<string, any>;
 type Message = Record<string, any>;
 
 /**
+ * Check whether a user message contains tool_result blocks.
+ * The Anthropic API requires every tool_result to have a matching tool_use
+ * in the immediately preceding assistant message.
+ */
+function hasToolResultBlock(msg: Message): boolean {
+  if (msg.role !== 'user' || !Array.isArray(msg.content)) return false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return msg.content.some((block: any) => block.type === 'tool_result');
+}
+
+/**
  * Strategy 1 — Message count cap
  *
  * When messages exceed maxMessages:
  *   - Always keep the first message (usually the system-level user instruction)
  *   - Drop the oldest messages from position [1 … end - (maxMessages - 1)]
  *   - Keep the most recent (maxMessages - 1) messages
+ *   - Adjust the cut boundary so tool_use / tool_result pairs are never split
  */
 function applyMessageCap(messages: Message[], maxMessages: number): Message[] {
   if (messages.length <= maxMessages) return messages;
 
-  const kept = maxMessages - 1; // slots for recent messages (first slot is always messages[0])
-  const dropped = messages.length - 1 - kept; // how many middle messages are dropped
+  const kept = maxMessages - 1;
+  let cutStart = messages.length - kept;
 
-  // Insert a placeholder so the model understands the context gap
+  // If the first kept message is a user message with tool_result, the matching
+  // tool_use lives in the previous assistant message which would be dropped.
+  // Expand the kept window backwards until the boundary is clean.
+  while (cutStart > 1 && hasToolResultBlock(messages[cutStart])) {
+    cutStart--;
+  }
+
+  const dropped = cutStart - 1;
+  if (dropped <= 0) return messages;
+
   const placeholder: Message = {
     role: 'user',
     content: `[Pruner: ${dropped} message${dropped === 1 ? '' : 's'} omitted to reduce context size. The conversation continues from here.]`,
   };
 
-  return [messages[0], placeholder, ...messages.slice(messages.length - kept)];
+  return [messages[0], placeholder, ...messages.slice(cutStart)];
 }
 
 /**

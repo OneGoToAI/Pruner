@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pruner — Cut your Claude Code bill by 70%</title>
+  <meta name="description" content="Zero-config local proxy that automatically compresses Claude Code context and injects prompt caching. Save 20–70% on every session. One-line install." />
+  <meta property="og:title" content="Pruner — Cut your Claude Code bill by 70%" />
+  <meta property="og:description" content="Zero-config local proxy for Claude Code. Saves 20–70% on API costs automatically." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Pruner — Cut your Claude Code bill by 70%" />
+  <meta name="twitter:description" content="Zero-config local proxy that automatically compresses Claude Code context. Save 20–70% on every session." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            canvas: '#0d1117',
+            surface: '#161b22',
+            border: '#30363d',
+            'border-muted': '#21262d',
+          },
+        },
+      },
+    }
+  </script>
+  <style>
+    html { scroll-behavior: smooth; }
+    .gradient-text {
+      background: linear-gradient(135deg, #22c55e 0%, #22d3ee 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .glow-green {
+      box-shadow: 0 0 40px rgba(34, 197, 94, 0.12);
+    }
+    .copy-btn:active { transform: scale(0.97); }
+    pre { tab-size: 2; }
+    /* terminal cursor blink */
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    .cursor { animation: blink 1.2s step-end infinite; }
+  </style>
+</head>
+<body class="bg-canvas text-gray-200 font-sans antialiased">
+
+  <!-- ── Nav ─────────────────────────────────────────────── -->
+  <nav class="fixed top-0 left-0 right-0 z-50 border-b border-border bg-canvas/80 backdrop-blur-md">
+    <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <span class="font-mono font-medium text-green-400 text-lg tracking-tight">pruner</span>
+      <div class="flex items-center gap-6">
+        <a href="#install" class="text-sm text-gray-400 hover:text-gray-200 transition-colors">Install</a>
+        <a href="#how-it-works" class="text-sm text-gray-400 hover:text-gray-200 transition-colors">How it works</a>
+        <a href="#faq" class="text-sm text-gray-400 hover:text-gray-200 transition-colors">FAQ</a>
+        <a href="https://github.com/OneGoToAI/pruner-releases"
+           target="_blank" rel="noopener"
+           class="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-200 transition-colors">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Hero ─────────────────────────────────────────────── -->
+  <section class="pt-32 pb-20 px-6">
+    <div class="max-w-4xl mx-auto text-center">
+
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-green-500/30 bg-green-500/5 text-green-400 text-xs font-mono mb-8">
+        <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+        v0.1.0 — available now
+      </div>
+
+      <h1 class="text-5xl sm:text-6xl font-extrabold tracking-tight text-white leading-tight mb-6">
+        Cut your Claude Code bill<br />
+        <span class="gradient-text">by up to 70%</span>
+      </h1>
+
+      <p class="text-xl text-gray-400 mb-10 max-w-2xl mx-auto leading-relaxed">
+        Pruner runs silently in the background while you use Claude Code,
+        automatically reducing what you spend on every API call —
+        <span class="text-gray-200">without changing how Claude behaves.</span>
+      </p>
+
+      <!-- Install CTA -->
+      <div class="flex flex-col sm:flex-row gap-3 justify-center items-center mb-6">
+        <div class="relative group w-full sm:w-auto">
+          <div class="flex items-center gap-3 bg-surface border border-border rounded-lg px-5 py-3 font-mono text-sm text-gray-300 glow-green">
+            <span class="text-green-500 select-none">$</span>
+            <span id="curl-cmd" class="select-all">curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash</span>
+            <button onclick="copyInstall()" class="copy-btn ml-2 flex-shrink-0 text-gray-500 hover:text-green-400 transition-colors" title="Copy">
+              <svg id="copy-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+              </svg>
+              <svg id="check-icon" class="w-4 h-4 hidden text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <p class="text-xs text-gray-600 mb-12">
+        macOS (Apple Silicon &amp; Intel) · Linux x64 · requires
+        <a href="https://claude.ai/download" target="_blank" rel="noopener" class="text-gray-500 hover:text-gray-400 underline">Claude Code CLI</a>
+      </p>
+
+      <!-- Terminal preview -->
+      <div class="max-w-2xl mx-auto rounded-xl overflow-hidden border border-border shadow-2xl">
+        <!-- title bar -->
+        <div class="flex items-center gap-2 px-4 py-3 bg-surface border-b border-border">
+          <span class="w-3 h-3 rounded-full bg-red-500/70"></span>
+          <span class="w-3 h-3 rounded-full bg-yellow-500/70"></span>
+          <span class="w-3 h-3 rounded-full bg-green-500/70"></span>
+          <span class="ml-3 text-xs text-gray-600 font-mono">Terminal</span>
+        </div>
+        <!-- terminal body -->
+        <div class="bg-[#0d1117] p-5 font-mono text-sm text-left leading-relaxed">
+          <div class="text-gray-500 mb-3"><span class="text-green-500">~</span> <span class="text-gray-400">pruner</span></div>
+          <!-- startup bar -->
+          <div class="text-gray-600">────────────────────────────────────────────────────</div>
+          <div class="mb-1">
+            <span class="text-green-400 font-semibold">Pruner</span>
+            <span class="text-gray-500">  proxy </span>
+            <span class="text-white">→ 127.0.0.1:7777</span>
+            <span class="text-gray-500">  optimizing your Claude requests  </span>
+            <span class="text-gray-600">[verified ✓]</span>
+          </div>
+          <div class="text-gray-600 mb-4">────────────────────────────────────────────────────</div>
+          <!-- simulated claude output -->
+          <div class="text-gray-400 mb-3 text-xs">Claude is thinking...</div>
+          <!-- request 1 log -->
+          <div class="text-gray-600 mt-3">────────────────────────────────────────────────────</div>
+          <div class="flex flex-wrap gap-x-3 items-center mb-0.5">
+            <span class="text-green-400 font-semibold">Pruner</span>
+            <span class="text-cyan-400 font-semibold">#1</span>
+            <span class="text-cyan-400">28,430</span><span class="text-gray-500">→</span><span class="text-cyan-400">17,102 tok</span><span class="text-gray-600">✓</span>
+            <span class="text-green-400">-39.8%</span>
+            <span class="text-yellow-400">$0.034</span>
+            <span class="text-gray-600">│</span>
+            <span class="text-purple-400">⚡ 51,240 cached</span><span class="text-gray-600">✓</span>
+            <span class="text-yellow-400">$0.138</span>
+            <span class="text-gray-600">│</span>
+            <span class="text-gray-500">Σ $0.172</span>
+          </div>
+          <div class="text-gray-600 mb-3">────────────────────────────────────────────────────</div>
+          <!-- session report -->
+          <div class="text-gray-600">────────────────────────────────────────────────────</div>
+          <div class="mb-1">
+            <span class="text-green-400 font-semibold">Pruner</span>
+            <span class="text-white font-semibold">  Session Report</span>
+            <span class="text-gray-600">  ✓ verified</span>
+          </div>
+          <div class="text-gray-600 mb-1">────────────────────────────────────────────────────</div>
+          <div class="grid gap-0.5 text-sm">
+            <div class="flex justify-between"><span class="text-gray-500">Requests</span><span class="text-white">12</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Original tokens</span><span class="text-white">128,432</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">After pruning</span><span class="text-white">31,204</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Pruning saved</span><span class="text-white">75.7%  $0.29</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Cache hit tokens</span><span class="text-white">48,570 ✓</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Cache saved</span><span class="text-white">$0.13</span></div>
+          </div>
+          <div class="text-gray-600 my-1">────────────────────────────────────────────────────</div>
+          <div class="flex justify-between font-semibold">
+            <span class="text-gray-500">Total saved</span>
+            <span class="text-yellow-400">$0.42</span>
+          </div>
+          <div class="text-gray-600">────────────────────────────────────────────────────</div>
+          <div class="mt-2 text-gray-600 text-xs"><span class="cursor">▋</span></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── How it works ─────────────────────────────────────── -->
+  <section id="how-it-works" class="py-20 px-6 border-t border-border">
+    <div class="max-w-4xl mx-auto">
+      <h2 class="text-3xl font-bold text-white text-center mb-4">Works in 30 seconds</h2>
+      <p class="text-gray-500 text-center mb-14">No config files. No API keys to manage. No code changes.</p>
+
+      <div class="grid md:grid-cols-3 gap-8">
+        <!-- step 1 -->
+        <div class="relative">
+          <div class="flex items-center gap-3 mb-4">
+            <span class="w-8 h-8 rounded-full bg-green-500/15 border border-green-500/30 flex items-center justify-center text-green-400 font-mono text-sm font-semibold">1</span>
+            <h3 class="text-white font-semibold">Install</h3>
+          </div>
+          <div class="bg-surface border border-border rounded-lg p-3 font-mono text-xs text-gray-400 mb-3">
+            <span class="text-green-500">$</span> curl -fsSL .../install.sh | bash
+          </div>
+          <p class="text-gray-500 text-sm">One command. No Node.js or npm required. Self-contained binary under 20 MB.</p>
+        </div>
+
+        <!-- step 2 -->
+        <div class="relative">
+          <div class="flex items-center gap-3 mb-4">
+            <span class="w-8 h-8 rounded-full bg-green-500/15 border border-green-500/30 flex items-center justify-center text-green-400 font-mono text-sm font-semibold">2</span>
+            <h3 class="text-white font-semibold">Replace <code class="text-green-400">claude</code></h3>
+          </div>
+          <div class="bg-surface border border-border rounded-lg p-3 font-mono text-xs mb-3">
+            <div class="text-red-400/70 line-through mb-1">claude</div>
+            <div class="text-green-400">pruner</div>
+          </div>
+          <p class="text-gray-500 text-sm">All Claude flags work identically. <code class="text-gray-400 text-xs">--resume</code>, <code class="text-gray-400 text-xs">-p</code>, everything.</p>
+        </div>
+
+        <!-- step 3 -->
+        <div class="relative">
+          <div class="flex items-center gap-3 mb-4">
+            <span class="w-8 h-8 rounded-full bg-green-500/15 border border-green-500/30 flex items-center justify-center text-green-400 font-mono text-sm font-semibold">3</span>
+            <h3 class="text-white font-semibold">Watch savings</h3>
+          </div>
+          <div class="bg-surface border border-border rounded-lg p-3 font-mono text-xs text-gray-400 mb-3">
+            <div><span class="text-green-400">Pruner</span> <span class="text-cyan-400">#4</span> <span class="text-green-400">-39%</span> <span class="text-yellow-400">$0.034</span></div>
+          </div>
+          <p class="text-gray-500 text-sm">After each Claude response, Pruner prints exactly how much it saved — verified by Anthropic's own tokenizer.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Features ─────────────────────────────────────────── -->
+  <section class="py-20 px-6 bg-surface/40">
+    <div class="max-w-4xl mx-auto">
+      <h2 class="text-3xl font-bold text-white text-center mb-4">What Pruner does automatically</h2>
+      <p class="text-gray-500 text-center mb-14">Three optimization strategies applied in real-time, before each request reaches Anthropic.</p>
+
+      <div class="grid md:grid-cols-3 gap-6">
+
+        <div class="bg-surface border border-border rounded-xl p-6 hover:border-green-500/30 transition-colors">
+          <div class="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Context Pruning</h3>
+          <p class="text-gray-500 text-sm leading-relaxed">
+            Long conversations balloon with redundant history. Pruner trims old messages and
+            oversized tool outputs while preserving the context Claude actually needs.
+          </p>
+          <div class="mt-4 text-xs font-mono text-gray-600">
+            maxMessages · maxToolOutputChars
+          </div>
+        </div>
+
+        <div class="bg-surface border border-border rounded-xl p-6 hover:border-purple-500/30 transition-colors">
+          <div class="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+            </svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Prompt Cache Injection</h3>
+          <p class="text-gray-500 text-sm leading-relaxed">
+            Anthropic's prompt cache cuts repeated input costs by 90%. Pruner automatically
+            injects <code class="text-purple-400/80">cache_control</code> on large system prompts so you get cache hits without any code changes.
+          </p>
+          <div class="mt-4 text-xs font-mono text-gray-600">
+            cache_read: $0.30/M vs input: $3.00/M
+          </div>
+        </div>
+
+        <div class="bg-surface border border-border rounded-xl p-6 hover:border-cyan-500/30 transition-colors">
+          <div class="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center mb-4">
+            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Verified Savings</h3>
+          <p class="text-gray-500 text-sm leading-relaxed">
+            Savings figures use Anthropic's own <code class="text-cyan-400/80">count_tokens</code> API and
+            actual <code class="text-cyan-400/80">usage.input_tokens</code> from each response —
+            not estimates. What Pruner shows matches your bill.
+          </p>
+          <div class="mt-4 text-xs font-mono text-gray-600">
+            ✓ verified · ~estimated (fallback)
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Commands ─────────────────────────────────────────── -->
+  <section class="py-20 px-6 border-t border-border">
+    <div class="max-w-3xl mx-auto">
+      <h2 class="text-3xl font-bold text-white text-center mb-4">Commands</h2>
+      <p class="text-gray-500 text-center mb-12">Every Claude flag works. A few extras.</p>
+
+      <div class="bg-surface border border-border rounded-xl overflow-hidden divide-y divide-border">
+        <div class="grid grid-cols-2 px-5 py-3 text-xs text-gray-600 font-mono uppercase tracking-wider">
+          <span>Command</span><span>Description</span>
+        </div>
+        <div class="grid grid-cols-2 px-5 py-3.5 items-center">
+          <code class="font-mono text-sm text-green-400">pruner</code>
+          <span class="text-sm text-gray-400">Start Claude with cost optimization</span>
+        </div>
+        <div class="grid grid-cols-2 px-5 py-3.5 items-center">
+          <code class="font-mono text-sm text-green-400">pruner --resume</code>
+          <span class="text-sm text-gray-400">Resume last session (all Claude flags pass through)</span>
+        </div>
+        <div class="grid grid-cols-2 px-5 py-3.5 items-center">
+          <code class="font-mono text-sm text-green-400">pruner --debug</code>
+          <span class="text-sm text-gray-400">Show every outbound connection — verify Pruner only talks to Anthropic</span>
+        </div>
+        <div class="grid grid-cols-2 px-5 py-3.5 items-center">
+          <code class="font-mono text-sm text-green-400">pruner config</code>
+          <span class="text-sm text-gray-400">Open <code class="text-gray-500">~/.pruner/config.json</code> in your editor</span>
+        </div>
+        <div class="grid grid-cols-2 px-5 py-3.5 items-center">
+          <code class="font-mono text-sm text-green-400">pruner reset</code>
+          <span class="text-sm text-gray-400">Reset session statistics</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Install ──────────────────────────────────────────── -->
+  <section id="install" class="py-20 px-6 bg-surface/40 border-t border-border">
+    <div class="max-w-3xl mx-auto">
+      <h2 class="text-3xl font-bold text-white text-center mb-4">Install</h2>
+      <p class="text-gray-500 text-center mb-12">No Node.js, no npm, no dependencies. Single binary.</p>
+
+      <div class="grid md:grid-cols-2 gap-6 mb-10">
+        <!-- curl -->
+        <div class="bg-surface border border-border rounded-xl p-6">
+          <div class="flex items-center gap-2 mb-4">
+            <span class="text-xl">🐚</span>
+            <h3 class="text-white font-semibold">curl (recommended)</h3>
+          </div>
+          <p class="text-gray-500 text-sm mb-4">Works on macOS and Linux. Detects your architecture automatically.</p>
+          <div class="bg-canvas rounded-lg p-3 font-mono text-xs text-gray-400 relative group">
+            <span class="text-green-500">$</span> curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash
+            <button onclick="copyInstall2()" class="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-green-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- homebrew -->
+        <div class="bg-surface border border-border rounded-xl p-6">
+          <div class="flex items-center gap-2 mb-4">
+            <span class="text-xl">🍺</span>
+            <h3 class="text-white font-semibold">Homebrew</h3>
+          </div>
+          <p class="text-gray-500 text-sm mb-4">macOS only. Easier to update later with <code class="text-gray-400 text-xs">brew upgrade pruner</code>.</p>
+          <div class="bg-canvas rounded-lg p-3 font-mono text-xs text-gray-400">
+            <div><span class="text-green-500">$</span> brew install OneGoToAI/tap/pruner</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-surface border border-border rounded-xl p-6">
+        <h3 class="text-white font-semibold mb-3">Requirements</h3>
+        <ul class="space-y-2 text-sm text-gray-400">
+          <li class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+            macOS (Apple Silicon or Intel) or Linux x64
+          </li>
+          <li class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+            <a href="https://claude.ai/download" target="_blank" rel="noopener" class="text-gray-300 hover:text-green-400 underline transition-colors">Claude Code CLI</a> installed and logged in
+          </li>
+          <li class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+            That's it — no Node.js, no Python, no other dependencies
+          </li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── Config ───────────────────────────────────────────── -->
+  <section class="py-20 px-6 border-t border-border">
+    <div class="max-w-3xl mx-auto">
+      <h2 class="text-3xl font-bold text-white text-center mb-4">Configuration</h2>
+      <p class="text-gray-500 text-center mb-4">Run <code class="text-green-400 font-mono">pruner config</code> to open <code class="text-gray-400 font-mono">~/.pruner/config.json</code>.</p>
+      <p class="text-gray-600 text-center text-sm mb-12">Changes take effect immediately — no restart required.</p>
+
+      <div class="bg-surface border border-border rounded-xl overflow-hidden">
+        <div class="flex items-center gap-2 px-5 py-3 border-b border-border bg-canvas/50">
+          <span class="w-2.5 h-2.5 rounded-full bg-border"></span>
+          <span class="font-mono text-xs text-gray-600">~/.pruner/config.json</span>
+        </div>
+        <pre class="p-5 font-mono text-sm text-gray-300 overflow-x-auto leading-relaxed"><code><span class="text-gray-600">{</span>
+  <span class="text-cyan-400">"proxyPort"</span><span class="text-gray-600">:</span> <span class="text-yellow-400">7777</span><span class="text-gray-600">,</span>
+  <span class="text-cyan-400">"optimizer"</span><span class="text-gray-600">: {</span>
+    <span class="text-cyan-400">"enablePromptCache"</span><span class="text-gray-600">:</span>    <span class="text-purple-400">true</span><span class="text-gray-600">,</span>    <span class="text-gray-600 italic">// inject cache_control on large system prompts</span>
+    <span class="text-cyan-400">"enableContextPruning"</span><span class="text-gray-600">:</span> <span class="text-purple-400">true</span><span class="text-gray-600">,</span>    <span class="text-gray-600 italic">// trim old messages</span>
+    <span class="text-cyan-400">"enableTruncation"</span><span class="text-gray-600">:</span>     <span class="text-purple-400">true</span><span class="text-gray-600">,</span>    <span class="text-gray-600 italic">// cap oversized tool outputs</span>
+    <span class="text-cyan-400">"accurateTokenCounting"</span><span class="text-gray-600">:</span> <span class="text-purple-400">true</span><span class="text-gray-600">,</span>   <span class="text-gray-600 italic">// use Anthropic count_tokens API</span>
+    <span class="text-cyan-400">"maxMessages"</span><span class="text-gray-600">:</span>         <span class="text-yellow-400">20</span><span class="text-gray-600">,</span>      <span class="text-gray-600 italic">// keep last N messages</span>
+    <span class="text-cyan-400">"maxToolOutputChars"</span><span class="text-gray-600">:</span>  <span class="text-yellow-400">3000</span>       <span class="text-gray-600 italic">// chars per tool result</span>
+  <span class="text-gray-600">},</span>
+  <span class="text-cyan-400">"pricing"</span><span class="text-gray-600">: {</span>
+    <span class="text-cyan-400">"inputPerMillion"</span><span class="text-gray-600">:</span>      <span class="text-yellow-400">3.0</span><span class="text-gray-600">,</span>
+    <span class="text-cyan-400">"outputPerMillion"</span><span class="text-gray-600">:</span>     <span class="text-yellow-400">15.0</span><span class="text-gray-600">,</span>
+    <span class="text-cyan-400">"cacheWritePerMillion"</span><span class="text-gray-600">:</span> <span class="text-yellow-400">3.75</span><span class="text-gray-600">,</span>
+    <span class="text-cyan-400">"cacheReadPerMillion"</span><span class="text-gray-600">:</span>  <span class="text-yellow-400">0.3</span>
+  <span class="text-gray-600">}</span>
+<span class="text-gray-600">}</span></code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FAQ ──────────────────────────────────────────────── -->
+  <section id="faq" class="py-20 px-6 bg-surface/40 border-t border-border">
+    <div class="max-w-2xl mx-auto">
+      <h2 class="text-3xl font-bold text-white text-center mb-14">Frequently asked</h2>
+
+      <div class="space-y-6">
+
+        <details class="bg-surface border border-border rounded-xl group" open>
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer list-none">
+            <span class="text-white font-medium">Does Pruner see my API key or code?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </summary>
+          <div class="px-6 pb-5 text-gray-400 text-sm leading-relaxed border-t border-border pt-4">
+            <p class="mb-3">Pruner is a <strong class="text-gray-200">local-only proxy</strong> — it only listens on <code class="text-green-400/80">127.0.0.1</code> and only connects to <code class="text-green-400/80">api.anthropic.com</code>. Your API key is forwarded transparently and never stored.</p>
+            <p>You can verify this yourself by running <code class="text-green-400/80 font-mono">pruner --debug</code>, which prints every outbound connection, or by inspecting with:</p>
+            <div class="mt-2 bg-canvas rounded-lg p-3 font-mono text-xs text-gray-500">
+              sudo lsof -i -n -P | grep pruner
+            </div>
+          </div>
+        </details>
+
+        <details class="bg-surface border border-border rounded-xl group">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer list-none">
+            <span class="text-white font-medium">Will it change Claude's behavior or break my workflow?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </summary>
+          <div class="px-6 pb-5 text-gray-400 text-sm leading-relaxed border-t border-border pt-4">
+            <p class="mb-2">Claude's responses are never touched — Pruner only modifies what you <em>send</em> to Anthropic, not what comes back.</p>
+            <p>If Claude's context window feels different after aggressive pruning, you can tune <code class="text-green-400/80 font-mono">maxMessages</code> up in the config, or disable context pruning entirely while keeping prompt cache injection active.</p>
+          </div>
+        </details>
+
+        <details class="bg-surface border border-border rounded-xl group">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer list-none">
+            <span class="text-white font-medium">How accurate are the savings figures?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </summary>
+          <div class="px-6 pb-5 text-gray-400 text-sm leading-relaxed border-t border-border pt-4">
+            <p class="mb-2">Numbers marked <code class="text-cyan-400/80">✓ verified</code> come directly from Anthropic:</p>
+            <ul class="list-disc ml-4 mt-2 space-y-1">
+              <li><strong class="text-gray-300">Before token count</strong> — from Anthropic's <code class="text-cyan-400/80">/v1/messages/count_tokens</code> API, called in parallel (zero latency impact)</li>
+              <li><strong class="text-gray-300">After token count</strong> — from <code class="text-cyan-400/80">usage.input_tokens</code> in every API response</li>
+              <li><strong class="text-gray-300">Cache savings</strong> — from <code class="text-cyan-400/80">cache_read_input_tokens</code> in every API response</li>
+            </ul>
+            <p class="mt-2">If the count_tokens call fails (network timeout etc.), Pruner falls back to a tiktoken estimate and marks it <code class="text-gray-500">~estimated</code>.</p>
+          </div>
+        </details>
+
+        <details class="bg-surface border border-border rounded-xl group">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer list-none">
+            <span class="text-white font-medium">Does Pruner add latency to my requests?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </summary>
+          <div class="px-6 pb-5 text-gray-400 text-sm leading-relaxed border-t border-border pt-4">
+            <p>Practically zero. The proxy overhead is &lt;1ms. The <code class="text-cyan-400/80">count_tokens</code> API call runs <em>in parallel</em> with the main request — Claude's generation (typically 3–30 seconds) takes far longer than the token count call.</p>
+          </div>
+        </details>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CTA bottom ────────────────────────────────────────── -->
+  <section class="py-24 px-6 border-t border-border text-center">
+    <div class="max-w-xl mx-auto">
+      <h2 class="text-3xl font-bold text-white mb-4">Start saving today</h2>
+      <p class="text-gray-500 mb-8">One command. Zero config. Real savings.</p>
+      <div class="flex items-center gap-3 bg-surface border border-green-500/20 rounded-lg px-5 py-3 font-mono text-sm text-gray-300 glow-green max-w-max mx-auto cursor-text select-all">
+        <span class="text-green-500">$</span>
+        <span>curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ───────────────────────────────────────────── -->
+  <footer class="border-t border-border py-8 px-6">
+    <div class="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-600">
+      <span class="font-mono text-green-500/70">pruner</span>
+      <div class="flex items-center gap-6">
+        <a href="https://github.com/OneGoToAI/pruner-releases" target="_blank" rel="noopener" class="hover:text-gray-400 transition-colors">GitHub</a>
+        <a href="https://github.com/OneGoToAI/pruner-releases/blob/main/LICENSE" target="_blank" rel="noopener" class="hover:text-gray-400 transition-colors">License</a>
+        <a href="mailto:hello@onegotoai.com" class="hover:text-gray-400 transition-colors">Contact</a>
+      </div>
+      <span>© 2026 OneGoToAI. All rights reserved.</span>
+    </div>
+  </footer>
+
+  <script>
+    function copyInstall() {
+      const cmd = 'curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash';
+      navigator.clipboard.writeText(cmd).then(() => {
+        document.getElementById('copy-icon').classList.add('hidden');
+        document.getElementById('check-icon').classList.remove('hidden');
+        setTimeout(() => {
+          document.getElementById('copy-icon').classList.remove('hidden');
+          document.getElementById('check-icon').classList.add('hidden');
+        }, 2000);
+      });
+    }
+    function copyInstall2() {
+      const cmd = 'curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash';
+      navigator.clipboard.writeText(cmd);
+    }
+  </script>
+</body>
+</html>

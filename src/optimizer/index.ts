@@ -1,5 +1,5 @@
 // Copyright (c) 2026 OneGoToAI. All Rights Reserved.
-// Proprietary and confidential. Unauthorized use prohibited.
+// Licensed under the MIT License. See LICENSE in the project root.
 
 import { getConfig } from '../config.js';
 import { injectPromptCache, ANTHROPIC_BETA_HEADER } from './cache.js';

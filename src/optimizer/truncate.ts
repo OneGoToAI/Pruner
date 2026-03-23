@@ -1,5 +1,5 @@
 // Copyright (c) 2026 OneGoToAI. All Rights Reserved.
-// Proprietary and confidential. Unauthorized use prohibited.
+// Licensed under the MIT License. See LICENSE in the project root.
 
 const TAIL_CHARS = 500;
 const MARKER_TEMPLATE = (n: number) =>

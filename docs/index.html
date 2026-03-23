@@ -61,7 +61,7 @@
         <a href="#install" class="text-sm text-gray-400 hover:text-gray-200 transition-colors">Install</a>
         <a href="#how-it-works" class="text-sm text-gray-400 hover:text-gray-200 transition-colors">How it works</a>
         <a href="#faq" class="text-sm text-gray-400 hover:text-gray-200 transition-colors">FAQ</a>
-        <a href="https://github.com/OneGoToAI/pruner-releases"
+        <a href="https://github.com/OneGoToAI/Pruner"
            target="_blank" rel="noopener"
            class="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-200 transition-colors">
           <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
@@ -98,7 +98,7 @@
         <div class="relative group w-full sm:w-auto">
           <div class="flex items-center gap-3 bg-surface border border-border rounded-lg px-5 py-3 font-mono text-sm text-gray-300 glow-green">
             <span class="text-green-500 select-none">$</span>
-            <span id="curl-cmd" class="select-all">curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash</span>
+            <span id="curl-cmd" class="select-all">curl -fsSL https://raw.githubusercontent.com/OneGoToAI/Pruner/main/install.sh | bash</span>
             <button onclick="copyInstall()" class="copy-btn ml-2 flex-shrink-0 text-gray-500 hover:text-green-400 transition-colors" title="Copy">
               <svg id="copy-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
@@ -341,7 +341,7 @@
           </div>
           <p class="text-gray-500 text-sm mb-4">Works on macOS and Linux. Detects your architecture automatically.</p>
           <div class="bg-canvas rounded-lg p-3 font-mono text-xs text-gray-400 relative group">
-            <span class="text-green-500">$</span> curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash
+            <span class="text-green-500">$</span> curl -fsSL https://raw.githubusercontent.com/OneGoToAI/Pruner/main/install.sh | bash
             <button onclick="copyInstall2()" class="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-green-400">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
@@ -500,7 +500,7 @@
       <p class="text-gray-500 mb-8">One command. Zero config. Real savings.</p>
       <div class="flex items-center gap-3 bg-surface border border-green-500/20 rounded-lg px-5 py-3 font-mono text-sm text-gray-300 glow-green max-w-max mx-auto cursor-text select-all">
         <span class="text-green-500">$</span>
-        <span>curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash</span>
+        <span>curl -fsSL https://raw.githubusercontent.com/OneGoToAI/Pruner/main/install.sh | bash</span>
       </div>
     </div>
   </section>
@@ -510,8 +510,8 @@
     <div class="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-600">
       <span class="font-mono text-green-500/70">pruner</span>
       <div class="flex items-center gap-6">
-        <a href="https://github.com/OneGoToAI/pruner-releases" target="_blank" rel="noopener" class="hover:text-gray-400 transition-colors">GitHub</a>
-        <a href="https://github.com/OneGoToAI/pruner-releases/blob/main/LICENSE" target="_blank" rel="noopener" class="hover:text-gray-400 transition-colors">License</a>
+        <a href="https://github.com/OneGoToAI/Pruner" target="_blank" rel="noopener" class="hover:text-gray-400 transition-colors">GitHub</a>
+        <a href="https://github.com/OneGoToAI/Pruner/blob/main/LICENSE" target="_blank" rel="noopener" class="hover:text-gray-400 transition-colors">License</a>
         <a href="mailto:hello@onegotoai.com" class="hover:text-gray-400 transition-colors">Contact</a>
       </div>
       <span>© 2026 OneGoToAI. All rights reserved.</span>
@@ -520,7 +520,7 @@
 
   <script>
     function copyInstall() {
-      const cmd = 'curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash';
+      const cmd = 'curl -fsSL https://raw.githubusercontent.com/OneGoToAI/Pruner/main/install.sh | bash';
       navigator.clipboard.writeText(cmd).then(() => {
         document.getElementById('copy-icon').classList.add('hidden');
         document.getElementById('check-icon').classList.remove('hidden');
@@ -531,7 +531,7 @@
       });
     }
     function copyInstall2() {
-      const cmd = 'curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash';
+      const cmd = 'curl -fsSL https://raw.githubusercontent.com/OneGoToAI/Pruner/main/install.sh | bash';
       navigator.clipboard.writeText(cmd);
     }
   </script>

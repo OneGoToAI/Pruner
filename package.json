@@ -6,7 +6,6 @@
   "bin": {
     "pruner": "./dist/index.js"
   },
-  "private": true,
   "type": "module",
   "engines": {
     "node": ">=18.0.0"
@@ -28,7 +27,7 @@
   },
   "keywords": ["claude", "anthropic", "proxy", "token", "optimizer", "cost"],
   "author": "Pruner Team",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "dependencies": {
     "@fastify/http-proxy": "^9.5.0",
     "chalk": "^5.4.1",

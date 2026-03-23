@@ -6,17 +6,14 @@ on:
     tags:
       - 'v*'
 
-# This private repo only needs read access to contents.
-# Write access to the PUBLIC releases repo is handled via RELEASES_REPO_TOKEN.
 permissions:
-  contents: read
+  contents: write  # needed to create GitHub Releases and upload assets
 
 jobs:
   # ── 1. Build all binaries via cross-compilation on a single runner ───────────
   #
-  # Bun supports cross-compilation with --target, so we compile all three
-  # platform binaries from a single ubuntu-latest runner. This avoids needing
-  # macOS runners (macos-13 is deprecated; macos-latest is arm64-only).
+  # Bun supports cross-compilation with --target, so all three platform binaries
+  # are compiled from a single ubuntu-latest runner.
   build:
     name: Build all binaries
     runs-on: ubuntu-latest
@@ -54,24 +51,14 @@ jobs:
             pruner-darwin-x64.sha256
             pruner-linux-x64.sha256
 
-  # ── 2. Publish to the PUBLIC pruner-releases repo ───────────────────────────
-  #
-  # The source repo (OneGoToAI/Pruner) is PRIVATE.
-  # Binary downloads must be publicly accessible, so we publish to a separate
-  # PUBLIC repo: OneGoToAI/pruner-releases.
-  #
-  # Required secret: RELEASES_REPO_TOKEN
-  #   A GitHub PAT (classic) or fine-grained token with:
-  #     - Contents: read & write on OneGoToAI/pruner-releases
-  #     - Metadata: read
-  #
+  # ── 2. Create GitHub Release and upload binaries ─────────────────────────────
   release:
-    name: Publish to pruner-releases
+    name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4  # needed to get install.sh
+      - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
@@ -88,18 +75,16 @@ jobs:
           echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      # Publish GitHub Release on the PUBLIC repo
       - uses: softprops/action-gh-release@v2
         with:
-          repository: OneGoToAI/pruner-releases
-          token: ${{ secrets.RELEASES_REPO_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ env.tag }}
           name: Pruner ${{ env.tag }}
           body: |
             ## Install
 
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/OneGoToAI/Pruner/main/install.sh | bash
             ```
 
             Or via Homebrew:
@@ -107,34 +92,25 @@ jobs:
             brew install OneGoToAI/tap/pruner
             ```
 
+            ## What's included
+
+            | File | Platform |
+            |---|---|
+            | `pruner-darwin-arm64` | macOS Apple Silicon |
+            | `pruner-darwin-x64` | macOS Intel |
+            | `pruner-linux-x64` | Linux x64 |
+            | `checksums.txt` | SHA-256 checksums |
+
             ## Verify checksums
 
             ```bash
-            curl -fsSL https://github.com/OneGoToAI/pruner-releases/releases/download/${{ env.tag }}/checksums.txt
+            curl -fsSL https://github.com/OneGoToAI/Pruner/releases/download/${{ env.tag }}/checksums.txt
             ```
           files: |
             pruner-darwin-arm64
             pruner-darwin-x64
             pruner-linux-x64
             checksums.txt
-
-      # Push install.sh and landing page to the public repo's main branch
-      - name: Push install.sh and index.html to pruner-releases
-        env:
-          TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
-          TAG: ${{ env.tag }}
-        run: |
-          git clone "https://x-access-token:${TOKEN}@github.com/OneGoToAI/pruner-releases.git" public-repo
-          cp install.sh public-repo/install.sh
-          cp landing/index.html public-repo/index.html
-          touch public-repo/.nojekyll
-          cd public-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add install.sh index.html
-          # Only commit if anything changed
-          git diff --staged --quiet || git commit -m "release: ${TAG}"
-          git push
 
   # ── 3. Auto-update Homebrew Tap (opt-in) ─────────────────────────────────────
   #

@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # Pruner installer — downloads the correct pre-built binary for your platform.
-# Usage: curl -fsSL https://raw.githubusercontent.com/OneGoToAI/pruner-releases/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/OneGoToAI/Pruner/main/install.sh | bash
 set -euo pipefail
 
-# Binaries are published to a separate PUBLIC repo so anonymous downloads work.
-# The source repo (OneGoToAI/Pruner) is private.
-RELEASES_REPO="OneGoToAI/pruner-releases"
+RELEASES_REPO="OneGoToAI/Pruner"
 INSTALL_DIR="${PRUNER_INSTALL_DIR:-/usr/local/bin}"
 BINARY_NAME="pruner"
 
@@ -81,8 +79,7 @@ fi
 echo ""
 echo "Pruner ${LATEST} installed to ${DEST}"
 echo ""
-echo "By using Pruner you agree to the terms at:"
-echo "  https://github.com/${RELEASES_REPO}#license"
+echo "Pruner is open source (MIT). Source: https://github.com/${RELEASES_REPO}"
 echo ""
 echo "Usage:"
 echo "  pruner          # drop-in replacement for 'claude'"

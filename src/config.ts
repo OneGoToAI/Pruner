@@ -1,5 +1,5 @@
 // Copyright (c) 2026 OneGoToAI. All Rights Reserved.
-// Proprietary and confidential. Unauthorized use prohibited.
+// Licensed under the MIT License. See LICENSE in the project root.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { homedir } from 'os';

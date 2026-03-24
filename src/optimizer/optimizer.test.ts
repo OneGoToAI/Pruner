@@ -5,6 +5,8 @@ import { describe, it, expect } from 'vitest';
 import { truncateLargeContent } from './truncate.js';
 import { injectPromptCache } from './cache.js';
 import { pruneContext } from './pruner.js';
+import { deduplicateToolResults } from './dedup.js';
+import { summarizeDroppedMessages } from './summarizer.js';
 
 // ── truncate.ts ───────────────────────────────────────────────────────────────
 
@@ -141,9 +143,9 @@ const makeToolResultMsg = (toolContent: string) => ({
   role: 'user',
   content: [{ type: 'tool_result', tool_use_id: 'x', content: toolContent }],
 });
-const makeToolUseMsg = (id: string) => ({
+const makeToolUseMsg = (id: string, name = 'bash', input = { command: 'ls' }) => ({
   role: 'assistant',
-  content: [{ type: 'tool_use', id, name: 'bash', input: { command: 'ls' } }],
+  content: [{ type: 'tool_use', id, name, input }],
 });
 const makeToolResultMsgWithId = (id: string, output: string) => ({
   role: 'user',
@@ -276,13 +278,13 @@ describe('pruneContext — tool_use/tool_result pair preservation', () => {
 });
 
 describe('pruneContext — tool result truncation', () => {
-  it('truncates long tool_result string content', () => {
+  it('truncates long tool_result string content using head-tail strategy', () => {
     const longOutput = 'x'.repeat(5000);
     const messages = [makeToolResultMsg(longOutput)];
     const result = pruneContext({ messages }, 20, 3000);
     const block = result.messages[0].content[0];
     expect(block.content.length).toBeLessThan(longOutput.length);
-    expect(block.content).toContain('[Pruner: truncated');
+    expect(block.content).toContain('[Pruner: content truncated');
   });
 
   it('leaves short tool_result content untouched', () => {
@@ -305,7 +307,7 @@ describe('pruneContext — tool result truncation', () => {
     const result = pruneContext({ messages }, 20, 3000);
     const inner = result.messages[0].content[0].content[0];
     expect(inner.text.length).toBeLessThan(longText.length);
-    expect(inner.text).toContain('[Pruner: truncated');
+    expect(inner.text).toContain('[Pruner: content truncated');
   });
 
   it('does not touch non-tool_result blocks', () => {
@@ -315,6 +317,116 @@ describe('pruneContext — tool result truncation', () => {
     }];
     const result = pruneContext({ messages }, 20, 3000);
     expect(result.messages[0].content[0].text).toBe('normal message');
+  });
+});
+
+describe('pruneContext — tool-specific truncation', () => {
+  it('applies different truncation limits based on tool type', () => {
+    const messages = [
+      makeToolUseMsg('read1', 'Read', { path: 'file.txt' } as any),
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'read1', content: 'x'.repeat(2000) }],
+      },
+      makeToolUseMsg('grep1', 'Grep', { pattern: 'test' } as any),
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'grep1', content: 'y'.repeat(2000) }],
+      },
+    ];
+
+    const result = pruneContext({ messages }, 20, 3000);
+    
+    // Read tool_result should be truncated to ~1500 chars (head-tail)
+    const readResult = result.messages[1].content[0];
+    expect(readResult.content.length).toBeLessThan(2000);
+    expect(readResult.content.length).toBeGreaterThan(1000);
+    
+    // Grep tool_result should be truncated to ~1000 chars (head-only)
+    const grepResult = result.messages[3].content[0];
+    expect(grepResult.content.length).toBeLessThan(1500);
+    expect(grepResult.content.length).toBeGreaterThan(500);
+  });
+
+  it('uses fallback limit when tool name cannot be determined', () => {
+    const messages = [
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'unknown', content: 'x'.repeat(5000) }],
+      },
+    ];
+
+    const result = pruneContext({ messages }, 20, 3000);
+    const toolResult = result.messages[0].content[0];
+    
+    // Should use fallback limit of 3000 chars (head-tail strategy adds some overhead)
+    expect(toolResult.content.length).toBeLessThan(3500);
+    expect(toolResult.content.length).toBeGreaterThan(2500);
+  });
+});
+
+describe('pruneContext — structured summaries', () => {
+  it('generates structured summary when messages are dropped', () => {
+    const messages = Array.from({ length: 15 }, (_, i) => 
+      i % 2 === 0 
+        ? makeMsg('user', `user message ${i}`)
+        : makeMsg('assistant', `assistant message ${i}`)
+    );
+
+    const result = pruneContext({ messages }, 4, 3000);
+    
+    // With 15 messages and maxMessages=4, some should be dropped and summarized
+    expect(result.messages.length).toBeLessThan(messages.length);
+    
+    // Should contain a summary message
+    const hasSummary = result.messages.some((m: any) => 
+      typeof m.content === 'string' && m.content.includes('[Pruner context summary')
+    );
+    expect(hasSummary).toBe(true);
+  });
+
+  it('handles empty dropped messages gracefully', () => {
+    const messages = [makeMsg('user', 'hello'), makeMsg('assistant', 'hi')];
+    const result = pruneContext({ messages }, 5, 3000);
+    
+    // No messages should be dropped
+    expect(result.messages).toHaveLength(2);
+  });
+});
+
+describe('pruneContext — distance decay', () => {
+  it('applies more aggressive truncation to older assistant messages', () => {
+    const longContent = 'z'.repeat(6000);
+    const messages = [
+      makeMsg('user', 'start'),
+      makeMsg('assistant', longContent),  // Very old - should be truncated to ~800 chars
+      makeMsg('user', 'continue'),
+      makeMsg('assistant', longContent),  // Old - should be truncated to ~1500 chars  
+      makeMsg('user', 'more'),
+      makeMsg('assistant', longContent),  // Recent - should be truncated to ~3000 chars
+      makeMsg('user', 'final'),
+      makeMsg('assistant', longContent),  // Last - should NOT be truncated
+    ];
+
+    const result = pruneContext({ messages }, 20, 3000);
+    
+    // Very old message (index 1) - most aggressive truncation
+    // Age = 8 - 1 - 1 = 6, which is > 10, so gets 800 chars + head-tail overhead
+    expect(result.messages[1].content.length).toBeLessThan(1600);
+    expect(result.messages[1].content.length).toBeGreaterThan(700);
+    
+    // Old message (index 3) - moderate truncation
+    // Age = 8 - 1 - 3 = 4, which is <= 5, so gets 3000 chars
+    expect(result.messages[3].content.length).toBeLessThan(4000);
+    expect(result.messages[3].content.length).toBeGreaterThan(2500);
+    
+    // Recent message (index 5) - light truncation  
+    // Age = 8 - 1 - 5 = 2, which is <= 2, so gets full 5000 chars
+    expect(result.messages[5].content.length).toBeLessThan(6000);
+    expect(result.messages[5].content.length).toBeGreaterThan(4500);
+    
+    // Last message (index 7) - no truncation
+    expect(result.messages[7].content).toBe(longContent);
   });
 });
 
@@ -363,5 +475,154 @@ describe('pruneContext — assistant history trimming', () => {
     ];
     const result = pruneContext({ messages }, 20, 3000);
     expect(result.messages[0].content).toBe('short reply');
+  });
+});
+
+// ── dedup.ts ──────────────────────────────────────────────────────────────────
+
+describe('deduplicateToolResults — file read dedup', () => {
+  it('deduplicates repeated reads of the same file', () => {
+    const messages = [
+      // First read of src/proxy.ts
+      makeToolUseMsg('r1', 'Read', { path: 'src/proxy.ts' } as any),
+      makeToolResultMsgWithId('r1', 'original file content here...'),
+      // Some work in between
+      makeMsg('assistant', 'I see the issue'),
+      makeMsg('user', 'fix it'),
+      // Second read of src/proxy.ts (newer)
+      makeToolUseMsg('r2', 'Read', { path: 'src/proxy.ts' } as any),
+      makeToolResultMsgWithId('r2', 'updated file content here...'),
+    ];
+
+    const result = deduplicateToolResults(messages);
+
+    // First read result should be replaced with a reference
+    const firstResult = result[1].content[0];
+    expect(firstResult.content).toContain('deduplicated');
+    expect(firstResult.content).toContain('src/proxy.ts');
+
+    // Second read result should be preserved
+    const secondResult = result[5].content[0];
+    expect(secondResult.content).toBe('updated file content here...');
+  });
+
+  it('does not dedup different files', () => {
+    const messages = [
+      makeToolUseMsg('r1', 'Read', { path: 'src/a.ts' } as any),
+      makeToolResultMsgWithId('r1', 'file A content'),
+      makeToolUseMsg('r2', 'Read', { path: 'src/b.ts' } as any),
+      makeToolResultMsgWithId('r2', 'file B content'),
+    ];
+
+    const result = deduplicateToolResults(messages);
+
+    expect(result[1].content[0].content).toBe('file A content');
+    expect(result[3].content[0].content).toBe('file B content');
+  });
+
+  it('handles three reads of the same file — keeps only the last', () => {
+    const messages = [
+      makeToolUseMsg('r1', 'Read', { path: 'foo.ts' } as any),
+      makeToolResultMsgWithId('r1', 'version 1'),
+      makeToolUseMsg('r2', 'Read', { path: 'foo.ts' } as any),
+      makeToolResultMsgWithId('r2', 'version 2'),
+      makeToolUseMsg('r3', 'Read', { path: 'foo.ts' } as any),
+      makeToolResultMsgWithId('r3', 'version 3'),
+    ];
+
+    const result = deduplicateToolResults(messages);
+
+    // First two should be deduped
+    expect(result[1].content[0].content).toContain('deduplicated');
+    expect(result[3].content[0].content).toContain('deduplicated');
+    // Third should be preserved
+    expect(result[5].content[0].content).toBe('version 3');
+  });
+});
+
+describe('deduplicateToolResults — command output dedup', () => {
+  it('deduplicates repeated git status commands', () => {
+    const messages = [
+      makeToolUseMsg('s1', 'Bash', { command: 'git status' }),
+      makeToolResultMsgWithId('s1', 'On branch main\nnothing to commit'),
+      makeMsg('assistant', 'looks clean'),
+      makeMsg('user', 'now check again'),
+      makeToolUseMsg('s2', 'Bash', { command: 'git status' }),
+      makeToolResultMsgWithId('s2', 'On branch main\n1 file changed'),
+    ];
+
+    const result = deduplicateToolResults(messages);
+
+    // First result should be deduped
+    expect(result[1].content[0].content).toContain('deduplicated');
+    // Second should be preserved
+    expect(result[5].content[0].content).toBe('On branch main\n1 file changed');
+  });
+
+  it('does not dedup non-idempotent commands', () => {
+    const messages = [
+      makeToolUseMsg('s1', 'Bash', { command: 'npm install' }),
+      makeToolResultMsgWithId('s1', 'installed 500 packages'),
+      makeToolUseMsg('s2', 'Bash', { command: 'npm install' }),
+      makeToolResultMsgWithId('s2', 'installed 501 packages'),
+    ];
+
+    const result = deduplicateToolResults(messages);
+
+    // Both should be preserved (npm install is not idempotent)
+    expect(result[1].content[0].content).toBe('installed 500 packages');
+    expect(result[3].content[0].content).toBe('installed 501 packages');
+  });
+
+  it('returns messages unchanged when no duplicates exist', () => {
+    const messages = [
+      makeToolUseMsg('r1', 'Read', { path: 'a.ts' } as any),
+      makeToolResultMsgWithId('r1', 'content A'),
+      makeToolUseMsg('s1', 'Bash', { command: 'git status' }),
+      makeToolResultMsgWithId('s1', 'clean'),
+    ];
+
+    const result = deduplicateToolResults(messages);
+    expect(result[1].content[0].content).toBe('content A');
+    expect(result[3].content[0].content).toBe('clean');
+  });
+});
+
+describe('summarizeDroppedMessages — edge cases', () => {
+  it('handles messages with mixed content types', () => {
+    const messages = [
+      makeMsg('user', 'fix the authentication bug in the login module'),
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'I found the issue in the auth module.' },
+          { type: 'tool_use', id: 'r1', name: 'Read', input: { path: 'src/auth.ts' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'r1', content: 'export function login() { ... }' },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'The problem is fixed now.' },
+          { type: 'tool_use', id: 'w1', name: 'Write', input: { path: 'src/auth.ts' } },
+        ],
+      },
+    ];
+
+    const summary = summarizeDroppedMessages(messages);
+    expect(summary).toContain('[Pruner context summary');
+    expect(summary).toContain('authentication bug');
+    expect(summary).toContain('→ read src/auth.ts');
+    expect(summary).toContain('→ wrote src/auth.ts');
+  });
+
+  it('returns generic message for empty input', () => {
+    const summary = summarizeDroppedMessages([]);
+    expect(summary).toContain('no messages to summarize');
   });
 });

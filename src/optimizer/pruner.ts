@@ -2,6 +2,11 @@
 // Licensed under the MIT License. See LICENSE in the project root.
 
 import { truncateLargeContent } from './truncate.js';
+import { getPolicyForTool, findCorrespondingToolUse } from './tool-policies.js';
+import { summarizeDroppedMessages } from './summarizer.js';
+import { generateSmartSummary } from './llm-summarizer.js';
+import { deduplicateToolResults } from './dedup.js';
+import { getConfig } from '../config.js';
 
 const ASSISTANT_HISTORY_MAX_CHARS = 5000;
 const PRUNER_TRUNCATED_MARKER = (n: number) => `[Pruner: truncated ${n} chars]`;
@@ -47,9 +52,22 @@ function applyMessageCap(messages: Message[], maxMessages: number): Message[] {
   const dropped = cutStart - 1;
   if (dropped <= 0) return messages;
 
+  const { enableSmartSummaries, enableLlmSummary } = getConfig().optimizer;
+  const droppedMessages = messages.slice(1, cutStart);
+  
+  let summaryContent: string;
+  if (enableLlmSummary) {
+    // Three-tier: cached LLM summary → rule-based → generic placeholder
+    summaryContent = generateSmartSummary(droppedMessages);
+  } else if (enableSmartSummaries) {
+    summaryContent = summarizeDroppedMessages(droppedMessages);
+  } else {
+    summaryContent = `[Pruner: ${dropped} message${dropped === 1 ? '' : 's'} omitted to reduce context size. The conversation continues from here.]`;
+  }
+  
   const placeholder: Message = {
     role: 'user',
-    content: `[Pruner: ${dropped} message${dropped === 1 ? '' : 's'} omitted to reduce context size. The conversation continues from here.]`,
+    content: summaryContent,
   };
 
   return [messages[0], placeholder, ...messages.slice(cutStart)];
@@ -59,10 +77,11 @@ function applyMessageCap(messages: Message[], maxMessages: number): Message[] {
  * Strategy 2 — tool_result truncation
  *
  * For user messages whose content is an array, truncate any tool_result
- * block that exceeds maxToolOutputChars.
+ * block using tool-specific policies based on the corresponding tool_use.
+ * Different tools have different value densities and re-retrievability.
  */
-function truncateToolResults(messages: Message[], maxToolOutputChars: number): Message[] {
-  return messages.map((msg) => {
+function truncateToolResults(messages: Message[], fallbackMaxChars: number): Message[] {
+  return messages.map((msg, msgIndex) => {
     if (msg.role !== 'user' || !Array.isArray(msg.content)) return msg;
 
     const newContent = msg.content.map(
@@ -70,12 +89,12 @@ function truncateToolResults(messages: Message[], maxToolOutputChars: number): M
       (block: any) => {
         if (block.type !== 'tool_result') return block;
 
-        if (typeof block.content === 'string' && block.content.length > maxToolOutputChars) {
-          const dropped = block.content.length - maxToolOutputChars;
-          return {
-            ...block,
-            content: block.content.slice(0, maxToolOutputChars) + PRUNER_TRUNCATED_MARKER(dropped),
-          };
+        // Find the corresponding tool_use to determine truncation policy
+        const toolName = findCorrespondingToolUse(messages, msgIndex, block.tool_use_id);
+        const policy = toolName ? getPolicyForTool(toolName) : { maxChars: fallbackMaxChars, strategy: 'head-tail' as const };
+
+        if (typeof block.content === 'string') {
+          return truncateToolResultContent(block, policy);
         }
 
         // tool_result content can also be an array of text blocks
@@ -83,12 +102,13 @@ function truncateToolResults(messages: Message[], maxToolOutputChars: number): M
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const newInner = block.content.map((inner: any) => {
             if (inner.type !== 'text' || !inner.text) return inner;
-            if (inner.text.length <= maxToolOutputChars) return inner;
-            const dropped = inner.text.length - maxToolOutputChars;
-            return {
-              ...inner,
-              text: inner.text.slice(0, maxToolOutputChars) + PRUNER_TRUNCATED_MARKER(dropped),
-            };
+            if (inner.text.length <= policy.maxChars) return inner;
+            
+            const truncated = policy.strategy === 'head-only'
+              ? inner.text.slice(0, policy.maxChars)
+              : truncateLargeContent(inner.text, policy.maxChars);
+            
+            return { ...inner, text: truncated };
           });
           return { ...block, content: newInner };
         }
@@ -102,30 +122,77 @@ function truncateToolResults(messages: Message[], maxToolOutputChars: number): M
 }
 
 /**
- * Strategy 3 — Trim long assistant messages in history
+ * Apply tool-specific truncation policy to a tool_result block.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function truncateToolResultContent(block: any, policy: { maxChars: number; strategy: 'head-tail' | 'head-only' }): any {
+  if (typeof block.content !== 'string' || block.content.length <= policy.maxChars) {
+    return block;
+  }
+
+  let truncatedContent: string;
+  
+  if (policy.strategy === 'head-only') {
+    const dropped = block.content.length - policy.maxChars;
+    truncatedContent = block.content.slice(0, policy.maxChars) + PRUNER_TRUNCATED_MARKER(dropped);
+  } else {
+    // head-tail strategy
+    truncatedContent = truncateLargeContent(block.content, policy.maxChars);
+  }
+
+  return {
+    ...block,
+    content: truncatedContent,
+  };
+}
+
+/**
+ * Calculate maximum allowed characters for an assistant message based on its age.
+ * Newer messages get more generous limits, older messages get more aggressive truncation.
+ */
+function getMaxCharsForAge(messageIndex: number, totalMessages: number): number {
+  const age = totalMessages - 1 - messageIndex; // 0 = newest, higher = older
+  
+  if (age <= 2) return ASSISTANT_HISTORY_MAX_CHARS;     // Recent: 5000 chars
+  if (age <= 5) return Math.floor(ASSISTANT_HISTORY_MAX_CHARS * 0.6);  // 3000 chars
+  if (age <= 10) return Math.floor(ASSISTANT_HISTORY_MAX_CHARS * 0.3); // 1500 chars
+  return Math.floor(ASSISTANT_HISTORY_MAX_CHARS * 0.16);               // 800 chars
+}
+
+/**
+ * Strategy 3 — Trim long assistant messages in history with distance decay
  *
  * For every assistant message except the last, truncate string content
- * that exceeds ASSISTANT_HISTORY_MAX_CHARS. This prevents large code
- * generation outputs from being re-sent verbatim in subsequent turns.
+ * using age-based limits. Older messages get more aggressive truncation
+ * since they're less likely to be relevant to current context.
  */
 function trimHistoryAssistantMessages(messages: Message[]): Message[] {
   return messages.map((msg, idx) => {
     const isLast = idx === messages.length - 1;
     if (isLast || msg.role !== 'assistant') return msg;
 
-    if (typeof msg.content === 'string' && msg.content.length > ASSISTANT_HISTORY_MAX_CHARS) {
+    const maxChars = getMaxCharsForAge(idx, messages.length);
+
+    if (typeof msg.content === 'string' && msg.content.length > maxChars) {
       return {
         ...msg,
-        content: truncateLargeContent(msg.content, ASSISTANT_HISTORY_MAX_CHARS),
+        content: truncateLargeContent(msg.content, maxChars),
       };
     }
 
     if (Array.isArray(msg.content)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const newContent = msg.content.map((block: any) => {
-        if (block.type !== 'text' || !block.text) return block;
-        if (block.text.length <= ASSISTANT_HISTORY_MAX_CHARS) return block;
-        return { ...block, text: truncateLargeContent(block.text, ASSISTANT_HISTORY_MAX_CHARS) };
+        if (block.type === 'text' && block.text && block.text.length > maxChars) {
+          return { ...block, text: truncateLargeContent(block.text, maxChars) };
+        }
+        
+        // Also compress old tool_use blocks by summarizing large inputs
+        if (block.type === 'tool_use' && idx < messages.length - 10) {
+          return compressOldToolUse(block);
+        }
+        
+        return block;
       });
       return { ...msg, content: newContent };
     }
@@ -135,12 +202,42 @@ function trimHistoryAssistantMessages(messages: Message[]): Message[] {
 }
 
 /**
+ * Compress tool_use blocks in very old messages by summarizing large inputs.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function compressOldToolUse(block: any): any {
+  if (!block.input || typeof block.input !== 'object') return block;
+  
+  const inputStr = JSON.stringify(block.input);
+  if (inputStr.length <= 500) return block;
+  
+  // For very large inputs, replace with a summary
+  const toolName = block.name || 'unknown';
+  const summary = `{_pruner_summary: "${toolName} with ${inputStr.length} chars of input"}`;
+  
+  try {
+    return { ...block, input: JSON.parse(summary) };
+  } catch {
+    return { ...block, input: { _pruner_summary: `${toolName}(large input)` } };
+  }
+}
+
+/**
  * Apply all context-pruning strategies to the request body.
  */
 export function pruneContext(body: AnthropicBody, maxMessages: number, maxToolOutputChars: number): AnthropicBody {
   if (!Array.isArray(body.messages)) return body;
 
+  const { enableDedup } = getConfig().optimizer;
+
   let messages: Message[] = body.messages;
+
+  // Dedup runs first: replace older duplicate file reads and command outputs
+  // with short references before any truncation decisions are made.
+  if (enableDedup) {
+    messages = deduplicateToolResults(messages);
+  }
+
   messages = applyMessageCap(messages, maxMessages);
   messages = truncateToolResults(messages, maxToolOutputChars);
   messages = trimHistoryAssistantMessages(messages);

@@ -38,13 +38,38 @@ When you run `pruner`, it:
 2. Sets `ANTHROPIC_BASE_URL=http://127.0.0.1:7777` in the environment
 3. Spawns the real `claude` CLI with all your original flags
 
-Every API request passes through three optimization stages before reaching Anthropic:
+Every API request passes through **4-layer intelligent optimization** before reaching Anthropic:
 
-| Stage | What it does |
-|---|---|
-| **Context pruning** | Removes old messages beyond `maxMessages`. Inserts a placeholder so Claude understands the gap. Truncates oversized tool outputs. |
-| **Prompt cache injection** | Automatically adds `cache_control: { type: "ephemeral" }` to system prompts over 1,024 tokens. Cache reads cost 10× less than regular input ($0.30 vs $3.00 per million tokens). |
-| **Verified savings** | Calls `/v1/messages/count_tokens` in parallel (zero latency) to get Anthropic's own token count. Reports actual `usage.input_tokens` from each response. |
+### Layer 1: Tool-Aware Truncation
+Different tools produce outputs with varying information density and re-retrievability:
+- **File operations** (Read, View): Moderate truncation (1500 chars) — can be re-read if needed
+- **Search operations** (Grep, SemanticSearch): Aggressive truncation (1000 chars) — first results are most relevant  
+- **Build/test operations** (RunTests, Compile): Conservative truncation (4000 chars) — errors are unique and critical
+- **Directory listings** (ListDir, LS): Very aggressive truncation (500 chars) — low information density
+
+### Layer 2: Distance-Based Decay
+Assistant messages are truncated more aggressively as they age:
+- **Recent messages** (last 2): Full 5000 character limit
+- **Moderate age** (3-5 messages back): 3000 characters  
+- **Old messages** (6-10 back): 1500 characters
+- **Very old messages** (10+ back): 800 characters
+
+### Layer 3: Content Deduplication
+Claude Code often reads the same file multiple times or runs the same command repeatedly:
+- **File read dedup**: When `src/proxy.ts` is read 3 times, only the latest version is kept in context; older reads are replaced with `[Pruner: deduplicated, latest version preserved below]`
+- **Command output dedup**: Repeated `git status`, `ls`, `git diff` results are deduplicated — only the latest output survives
+- **Safe by design**: Only idempotent, read-only commands are deduplicated; write operations are never touched
+
+### Layer 4: Three-Tier Intelligent Summaries
+When messages must be dropped, Pruner uses a three-tier fallback strategy:
+1. **Cached LLM summary** (zero latency): If a previous request already generated an AI summary, reuse it instantly from `~/.pruner/summaries/`
+2. **Rule-based summary** (zero latency): Extract user instructions, tool operations, decisions, and errors into a structured summary
+3. **Background LLM call**: Fire a Claude Haiku call asynchronously to generate a high-quality summary, cached for next request (~$0.001/summary)
+
+### Bonus: Prompt Cache Injection & Verified Savings
+- **Prompt cache injection**: Automatically adds `cache_control: { type: "ephemeral" }` to system prompts over 1,024 tokens
+- **Context-aware preservation**: Tool use/result pairs are never split across boundaries
+- **Verified savings**: Calls `/v1/messages/count_tokens` in parallel to get Anthropic's own token count
 
 Nothing is sent to any server other than `api.anthropic.com`. Verify it yourself:
 
@@ -205,7 +230,10 @@ Run `pruner config` to open `~/.pruner/config.json`. Changes take effect immedia
     "enableTruncation": true,
     "accurateTokenCounting": true,
     "maxMessages": 20,
-    "maxToolOutputChars": 3000
+    "maxToolOutputChars": 3000,
+    "enableSmartSummaries": true,
+    "enableLlmSummary": true,
+    "enableDedup": true
   },
   "pricing": {
     "inputPerMillion": 3.0,
@@ -224,6 +252,9 @@ Run `pruner config` to open `~/.pruner/config.json`. Changes take effect immedia
 | `enableTruncation` | `true` | Cap individual tool outputs at `maxToolOutputChars`. |
 | `accurateTokenCounting` | `true` | Use Anthropic's `count_tokens` API for exact figures. |
 | `quiet` | `false` | Suppress per-request inline output. Stats are written to `~/.pruner/session.log` instead. Recommended when Claude Code's TUI feels cluttered. |
+| `enableSmartSummaries` | `true` | Replace dropped messages with structured summaries instead of generic placeholders. Helps maintain context continuity. |
+| `enableLlmSummary` | `true` | Use Claude Haiku to generate high-quality summaries of dropped messages in the background. Results are cached to `~/.pruner/summaries/`. |
+| `enableDedup` | `true` | Deduplicate repeated file reads and idempotent command outputs. Only the latest version is kept. |
 | `maxMessages` | `20` | Maximum messages to keep. First message is always preserved. |
 | `maxToolOutputChars` | `3000` | Characters per tool result before truncation. |
 | `pricing.*` | claude-3-5-sonnet rates | Override if you use different models or have custom pricing. |

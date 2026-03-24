@@ -24,6 +24,27 @@ export interface OptimizerConfig {
    * report are unaffected. Recommended when Claude Code's TUI is in use.
    */
   quiet: boolean;
+  /**
+   * When true, dropped message blocks are replaced with structured summaries
+   * that extract key actions and decisions instead of generic placeholders.
+   * Helps maintain context continuity while reducing token usage.
+   */
+  enableSmartSummaries: boolean;
+  /**
+   * When true, Pruner calls Claude Haiku in the background to generate
+   * high-quality summaries of dropped messages. Results are cached to disk
+   * (~/.pruner/summaries/) and reused on subsequent requests. The first
+   * request uses the rule-based summarizer; cached LLM summaries kick in
+   * from the second request onwards. Cost: ~$0.001–0.01 per summary.
+   */
+  enableLlmSummary: boolean;
+  /**
+   * When true, Pruner deduplicates repeated file reads and command outputs.
+   * If the same file is read multiple times, only the latest version is kept;
+   * older reads are replaced with a short reference. Same for repeated
+   * idempotent shell commands (git status, ls, etc.).
+   */
+  enableDedup: boolean;
 }
 
 export interface PricingConfig {
@@ -52,6 +73,9 @@ const DEFAULT_CONFIG: PrunerConfig = {
     maxToolOutputChars: 3000,
     accurateTokenCounting: true,
     quiet: false,
+    enableSmartSummaries: true,
+    enableLlmSummary: true,
+    enableDedup: true,
   },
   pricing: {
     inputPerMillion: 3.0,

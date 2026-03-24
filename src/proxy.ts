@@ -7,6 +7,7 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import { getConfig } from './config.js';
 import { optimize } from './optimizer/index.js';
+import { setAuthHeaders } from './optimizer/llm-summarizer.js';
 import { countTokens, fetchExactTokenCount } from './stats/counter.js';
 import { recordRequest, getStats, appendSessionLog, type RequestMetrics } from './stats/session.js';
 
@@ -126,13 +127,16 @@ export class AnthropicProxy implements ProxyServer {
       ? countTokens(optimizedBody)
       : localOrigTokens;
 
-    // Extract auth headers so we can call count_tokens on Anthropic's side.
+    // Extract auth headers so we can call count_tokens and LLM summarizer.
     // We snapshot them now before the request loop modifies forwardHeaders.
     const authHeaders: Record<string, string> = {};
     for (const key of ['x-api-key', 'authorization', 'anthropic-version', 'anthropic-beta']) {
       const val = request.headers[key] ?? request.headers[key.toLowerCase()];
       if (val) authHeaders[key] = Array.isArray(val) ? val[0] : String(val);
     }
+
+    // Share auth headers with the LLM summarizer for background API calls
+    setAuthHeaders(authHeaders);
 
     // Fire the accurate token count in parallel with the main request.
     // Uses Anthropic's own tokenizer → zero latency impact, verified numbers.

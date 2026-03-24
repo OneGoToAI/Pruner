@@ -247,8 +247,8 @@
   <!-- ── Features ─────────────────────────────────────────── -->
   <section class="py-20 px-6 bg-surface/40">
     <div class="max-w-4xl mx-auto">
-      <h2 class="text-3xl font-bold text-white text-center mb-4">What Pruner does automatically</h2>
-      <p class="text-gray-500 text-center mb-14">Three optimization strategies applied in real-time, before each request reaches Anthropic.</p>
+      <h2 class="text-3xl font-bold text-white text-center mb-4">4-Layer Intelligent Optimization</h2>
+      <p class="text-gray-500 text-center mb-14">Advanced context optimization that goes beyond simple truncation, applied in real-time before each request.</p>
 
       <div class="grid md:grid-cols-3 gap-6">
 
@@ -258,13 +258,14 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
             </svg>
           </div>
-          <h3 class="text-white font-semibold mb-2">Context Pruning</h3>
+          <h3 class="text-white font-semibold mb-2">Smart Context Optimization</h3>
           <p class="text-gray-500 text-sm leading-relaxed">
-            Long conversations balloon with redundant history. Pruner trims old messages and
-            oversized tool outputs while preserving the context Claude actually needs.
+            4-layer intelligence: tool-aware truncation, distance decay, content deduplication,
+            and three-tier LLM-powered summaries. Each tool type gets different treatment based on
+            information density and re-retrievability.
           </p>
           <div class="mt-4 text-xs font-mono text-gray-600">
-            maxMessages · maxToolOutputChars
+            dedup · tool policies · LLM summaries · distance decay
           </div>
         </div>
 
@@ -530,6 +531,9 @@
     <span class="text-cyan-400">"quiet"</span><span class="text-gray-600">:</span>                <span class="text-purple-400">false</span><span class="text-gray-600">,</span>   <span class="text-gray-600 italic">// true = write stats to ~/.pruner/session.log only</span>
     <span class="text-cyan-400">"maxMessages"</span><span class="text-gray-600">:</span>         <span class="text-yellow-400">20</span><span class="text-gray-600">,</span>      <span class="text-gray-600 italic">// keep last N messages</span>
     <span class="text-cyan-400">"maxToolOutputChars"</span><span class="text-gray-600">:</span>  <span class="text-yellow-400">3000</span>       <span class="text-gray-600 italic">// chars per tool result</span>
+    <span class="text-cyan-400">"enableSmartSummaries"</span><span class="text-gray-600">:</span> <span class="text-yellow-400">true</span>        <span class="text-gray-600 italic">// structured context summaries</span>
+    <span class="text-cyan-400">"enableLlmSummary"</span><span class="text-gray-600">:</span>    <span class="text-yellow-400">true</span>        <span class="text-gray-600 italic">// AI-powered summary via Haiku</span>
+    <span class="text-cyan-400">"enableDedup"</span><span class="text-gray-600">:</span>         <span class="text-yellow-400">true</span>        <span class="text-gray-600 italic">// deduplicate repeated file reads</span>
   <span class="text-gray-600">},</span>
   <span class="text-cyan-400">"pricing"</span><span class="text-gray-600">: {</span>
     <span class="text-cyan-400">"inputPerMillion"</span><span class="text-gray-600">:</span>      <span class="text-yellow-400">3.0</span><span class="text-gray-600">,</span>

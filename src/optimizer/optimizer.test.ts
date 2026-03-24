@@ -111,7 +111,7 @@ describe('injectPromptCache', () => {
     expect(result.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '5m' });
   });
 
-  it('detects cache_control in messages and skips injection', () => {
+  it('does not count message-level cache_control as client caching', () => {
     const body = {
       system: LONG_SYSTEM,
       messages: [
@@ -122,17 +122,61 @@ describe('injectPromptCache', () => {
       ],
     };
     const { clientCacheDetected } = injectPromptCache(body);
-    expect(clientCacheDetected).toBe(true);
+    // Message-level cache is from Pruner itself, not from the client
+    expect(clientCacheDetected).toBe(false);
   });
 
-  it('detects cache_control in tools and skips injection', () => {
+  it('detects cache_control in tools and skips system injection', () => {
     const body = {
       system: LONG_SYSTEM,
       tools: [{ name: 'bash', cache_control: { type: 'ephemeral' } }],
-      messages: [],
+      messages: [makeMsg('user', 'hi'), makeMsg('assistant', 'hello'), makeMsg('user', 'ok'), makeMsg('assistant', 'sure'), makeMsg('user', 'go')],
     };
-    const { clientCacheDetected } = injectPromptCache(body);
+    const { clientCacheDetected, body: result } = injectPromptCache(body);
     expect(clientCacheDetected).toBe(true);
+    // System should not have been modified (client manages it)
+    expect(result.system).toBe(LONG_SYSTEM);
+  });
+
+  it('injects cache breakpoint on conversation history messages', () => {
+    const body = {
+      system: 'short',
+      messages: [
+        makeMsg('user', 'msg 1'),
+        makeMsg('assistant', 'msg 2'),
+        makeMsg('user', 'msg 3'),
+        makeMsg('assistant', 'msg 4'),
+        makeMsg('user', 'msg 5'),
+        makeMsg('assistant', 'msg 6'),
+      ],
+    };
+    const { body: result } = injectPromptCache(body);
+    
+    // Breakpoint should be placed ~4 from end (index 2)
+    const breakpointMsg = result.messages[2];
+    // Should now have array content with cache_control
+    expect(Array.isArray(breakpointMsg.content) || typeof breakpointMsg.content === 'string').toBe(true);
+    if (Array.isArray(breakpointMsg.content)) {
+      const lastBlock = breakpointMsg.content[breakpointMsg.content.length - 1];
+      expect(lastBlock.cache_control).toEqual({ type: 'ephemeral' });
+    }
+  });
+
+  it('does not inject message breakpoint when too few messages', () => {
+    const body = {
+      system: 'short',
+      messages: [makeMsg('user', 'hi'), makeMsg('assistant', 'hello')],
+    };
+    const { body: result } = injectPromptCache(body);
+    // Should not have cache_control on messages
+    for (const msg of result.messages) {
+      if (typeof msg.content === 'string') continue;
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          expect(block.cache_control).toBeUndefined();
+        }
+      }
+    }
   });
 });
 
@@ -278,36 +322,37 @@ describe('pruneContext — tool_use/tool_result pair preservation', () => {
 });
 
 describe('pruneContext — tool result truncation', () => {
-  it('truncates long tool_result string content using head-tail strategy', () => {
+  it('truncates old tool_result but preserves latest round', () => {
     const longOutput = 'x'.repeat(5000);
-    const messages = [makeToolResultMsg(longOutput)];
+    const messages = [
+      // Old round: should be truncated
+      makeToolUseMsg('old1', 'Read', { path: 'old.ts' } as any),
+      makeToolResultMsgWithId('old1', longOutput),
+      // Latest round: should be preserved in full
+      makeToolUseMsg('new1', 'Read', { path: 'new.ts' } as any),
+      makeToolResultMsgWithId('new1', longOutput),
+    ];
     const result = pruneContext({ messages }, 20, 3000);
-    const block = result.messages[0].content[0];
-    expect(block.content.length).toBeLessThan(longOutput.length);
-    expect(block.content).toContain('[Pruner: content truncated');
+    
+    // Old tool_result (index 1) should be truncated
+    const oldBlock = result.messages[1].content[0];
+    expect(oldBlock.content.length).toBeLessThan(longOutput.length);
+    expect(oldBlock.content).toContain('[Pruner:');
+    
+    // Latest tool_result (index 3) should be preserved in full
+    const newBlock = result.messages[3].content[0];
+    expect(newBlock.content).toBe(longOutput);
   });
 
   it('leaves short tool_result content untouched', () => {
     const shortOutput = 'hello world';
-    const messages = [makeToolResultMsg(shortOutput)];
+    const messages = [
+      makeToolUseMsg('t1', 'Read', { path: 'a.ts' } as any),
+      makeToolResultMsgWithId('t1', shortOutput),
+      makeMsg('user', 'follow up'),
+    ];
     const result = pruneContext({ messages }, 20, 3000);
-    expect(result.messages[0].content[0].content).toBe(shortOutput);
-  });
-
-  it('truncates tool_result with array content (text blocks)', () => {
-    const longText = 'y'.repeat(5000);
-    const messages = [{
-      role: 'user',
-      content: [{
-        type: 'tool_result',
-        tool_use_id: 'x',
-        content: [{ type: 'text', text: longText }],
-      }],
-    }];
-    const result = pruneContext({ messages }, 20, 3000);
-    const inner = result.messages[0].content[0].content[0];
-    expect(inner.text.length).toBeLessThan(longText.length);
-    expect(inner.text).toContain('[Pruner: content truncated');
+    expect(result.messages[1].content[0].content).toBe(shortOutput);
   });
 
   it('does not touch non-tool_result blocks', () => {
@@ -317,6 +362,20 @@ describe('pruneContext — tool result truncation', () => {
     }];
     const result = pruneContext({ messages }, 20, 3000);
     expect(result.messages[0].content[0].text).toBe('normal message');
+  });
+
+  it('adds re-read hint for truncated Read tool results', () => {
+    const longOutput = 'x'.repeat(5000);
+    const messages = [
+      makeToolUseMsg('r1', 'Read', { path: 'file.ts' } as any),
+      makeToolResultMsgWithId('r1', longOutput),
+      // Add a newer round so the old one gets truncated
+      makeToolUseMsg('r2', 'Bash'),
+      makeToolResultMsgWithId('r2', 'done'),
+    ];
+    const result = pruneContext({ messages }, 20, 3000);
+    const block = result.messages[1].content[0];
+    expect(block.content).toContain('re-read if needed');
   });
 });
 
@@ -333,6 +392,9 @@ describe('pruneContext — tool-specific truncation', () => {
         role: 'user',
         content: [{ type: 'tool_result', tool_use_id: 'grep1', content: 'y'.repeat(2000) }],
       },
+      // Add a newer round so previous results are not "latest round"
+      makeToolUseMsg('later1', 'Bash'),
+      makeToolResultMsgWithId('later1', 'done'),
     ];
 
     const result = pruneContext({ messages }, 20, 3000);

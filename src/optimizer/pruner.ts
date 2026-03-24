@@ -9,7 +9,9 @@ import { deduplicateToolResults } from './dedup.js';
 import { getConfig } from '../config.js';
 
 const ASSISTANT_HISTORY_MAX_CHARS = 5000;
-const PRUNER_TRUNCATED_MARKER = (n: number) => `[Pruner: truncated ${n} chars]`;
+
+const RE_READABLE_TOOLS = new Set(['Read', 'View', 'ReadFile', 'Grep', 'Search', 'SemanticSearch', 'Glob', 'ListDir', 'LS']);
+const WRITE_TOOLS = new Set(['Write', 'WriteFile', 'Edit', 'StrReplace']);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnthropicBody = Record<string, any>;
@@ -74,30 +76,54 @@ function applyMessageCap(messages: Message[], maxMessages: number): Message[] {
 }
 
 /**
+ * Find the index of the last assistant message that contains tool_use blocks.
+ * Everything from that assistant message onwards is considered the "latest round"
+ * and should not have its tool_results truncated — Claude needs them in full
+ * for current reasoning.
+ */
+function findLatestToolRoundStart(messages: Message[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hasToolUse = msg.content.some((b: any) => b.type === 'tool_use');
+    if (hasToolUse) return i;
+  }
+  return messages.length;
+}
+
+/**
  * Strategy 2 — tool_result truncation
  *
  * For user messages whose content is an array, truncate any tool_result
  * block using tool-specific policies based on the corresponding tool_use.
  * Different tools have different value densities and re-retrievability.
+ *
+ * IMPORTANT: The latest round of tool_results (from the most recent
+ * assistant tool_use onwards) is NEVER truncated. Claude just requested
+ * those results and needs them in full for current reasoning.
  */
 function truncateToolResults(messages: Message[], fallbackMaxChars: number): Message[] {
+  const latestRoundStart = findLatestToolRoundStart(messages);
+
   return messages.map((msg, msgIndex) => {
     if (msg.role !== 'user' || !Array.isArray(msg.content)) return msg;
+
+    // Skip truncation for the latest round
+    if (msgIndex >= latestRoundStart) return msg;
 
     const newContent = msg.content.map(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (block: any) => {
         if (block.type !== 'tool_result') return block;
 
-        // Find the corresponding tool_use to determine truncation policy
         const toolName = findCorrespondingToolUse(messages, msgIndex, block.tool_use_id);
         const policy = toolName ? getPolicyForTool(toolName) : { maxChars: fallbackMaxChars, strategy: 'head-tail' as const };
 
         if (typeof block.content === 'string') {
-          return truncateToolResultContent(block, policy);
+          return truncateToolResultContent(block, policy, toolName);
         }
 
-        // tool_result content can also be an array of text blocks
         if (Array.isArray(block.content)) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const newInner = block.content.map((inner: any) => {
@@ -123,21 +149,31 @@ function truncateToolResults(messages: Message[], fallbackMaxChars: number): Mes
 
 /**
  * Apply tool-specific truncation policy to a tool_result block.
+ * Includes a re-read hint so Claude can re-fetch if it needs the full content.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function truncateToolResultContent(block: any, policy: { maxChars: number; strategy: 'head-tail' | 'head-only' }): any {
+function truncateToolResultContent(block: any, policy: { maxChars: number; strategy: 'head-tail' | 'head-only' }, toolName?: string | null): any {
   if (typeof block.content !== 'string' || block.content.length <= policy.maxChars) {
     return block;
   }
 
+  const dropped = block.content.length - policy.maxChars;
+  const rereadHint = (toolName && RE_READABLE_TOOLS.has(toolName))
+    ? ' Use the tool to re-read if needed.'
+    : '';
+
   let truncatedContent: string;
   
   if (policy.strategy === 'head-only') {
-    const dropped = block.content.length - policy.maxChars;
-    truncatedContent = block.content.slice(0, policy.maxChars) + PRUNER_TRUNCATED_MARKER(dropped);
+    truncatedContent = block.content.slice(0, policy.maxChars) +
+      `\n[Pruner: ${dropped} chars truncated.${rereadHint}]`;
   } else {
-    // head-tail strategy
-    truncatedContent = truncateLargeContent(block.content, policy.maxChars);
+    const headChars = Math.max(0, policy.maxChars - 500);
+    const head = block.content.slice(0, headChars);
+    const tail = block.content.slice(block.content.length - 500);
+    truncatedContent = head +
+      `\n[Pruner: ${dropped} chars truncated from middle.${rereadHint}]\n` +
+      tail;
   }
 
   return {
@@ -187,8 +223,9 @@ function trimHistoryAssistantMessages(messages: Message[]): Message[] {
           return { ...block, text: truncateLargeContent(block.text, maxChars) };
         }
         
-        // Also compress old tool_use blocks by summarizing large inputs
-        if (block.type === 'tool_use' && idx < messages.length - 10) {
+        // Compress old tool_use blocks (especially Write/StrReplace with large content).
+        // Skip the last 2 messages to protect the current round.
+        if (block.type === 'tool_use' && idx < messages.length - 2) {
           return compressOldToolUse(block);
         }
         
@@ -202,24 +239,53 @@ function trimHistoryAssistantMessages(messages: Message[]): Message[] {
 }
 
 /**
- * Compress tool_use blocks in very old messages by summarizing large inputs.
+ * Compress tool_use blocks in old messages by summarizing large inputs.
+ * Write/StrReplace inputs contain full file content that's no longer needed
+ * once the write is confirmed — the file can be re-read if needed.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function compressOldToolUse(block: any): any {
   if (!block.input || typeof block.input !== 'object') return block;
   
-  const inputStr = JSON.stringify(block.input);
-  if (inputStr.length <= 500) return block;
-  
-  // For very large inputs, replace with a summary
   const toolName = block.name || 'unknown';
-  const summary = `{_pruner_summary: "${toolName} with ${inputStr.length} chars of input"}`;
+  const input = block.input;
   
-  try {
-    return { ...block, input: JSON.parse(summary) };
-  } catch {
-    return { ...block, input: { _pruner_summary: `${toolName}(large input)` } };
+  // Write/StrReplace: the file was already written, content is no longer needed
+  if (WRITE_TOOLS.has(toolName)) {
+    const path = input.path || input.file_path || '';
+    const contentLen = typeof input.content === 'string' ? input.content.length : 0;
+    const oldStr = typeof input.old_string === 'string' ? input.old_string : undefined;
+    const newStr = typeof input.new_string === 'string' ? input.new_string : undefined;
+    
+    if (toolName === 'StrReplace' && oldStr && newStr) {
+      return {
+        ...block,
+        input: {
+          path,
+          _pruner_compressed: `replaced ${oldStr.length} chars with ${newStr.length} chars`,
+        },
+      };
+    }
+    
+    if (contentLen > 500) {
+      return {
+        ...block,
+        input: {
+          path,
+          _pruner_compressed: `wrote ${contentLen} chars (use Read to verify)`,
+        },
+      };
+    }
   }
+  
+  // Generic compression for other tools with very large inputs
+  const inputStr = JSON.stringify(input);
+  if (inputStr.length <= 800) return block;
+  
+  return {
+    ...block,
+    input: { _pruner_compressed: `${toolName} with ${inputStr.length} chars of input` },
+  };
 }
 
 /**

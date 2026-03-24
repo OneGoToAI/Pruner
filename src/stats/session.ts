@@ -64,6 +64,9 @@ export interface RequestMetrics {
   compVerified: boolean;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  /** True when the client (Claude Code) manages its own caching.
+   *  Cache stats from the client's own caching are NOT counted as Pruner savings. */
+  clientCacheDetected: boolean;
 }
 
 export function recordRequest(metrics: RequestMetrics): void {
@@ -72,20 +75,24 @@ export function recordRequest(metrics: RequestMetrics): void {
   const prunedTokens = Math.max(0, metrics.origTokens - metrics.compTokens);
   const pruneSaved = (prunedTokens / 1_000_000) * pricing.inputPerMillion;
 
-  const cacheHitSaved =
-    (metrics.cacheReadTokens / 1_000_000) *
-    (pricing.inputPerMillion - pricing.cacheReadPerMillion);
-
-  const cacheWriteExtra =
-    (metrics.cacheCreationTokens / 1_000_000) *
-    (pricing.cacheWritePerMillion - pricing.inputPerMillion);
-
   stats.requests++;
   stats.origTokens += metrics.origTokens;
   stats.compTokens += metrics.compTokens;
   stats.pruneSavedCost += pruneSaved;
-  stats.cacheHitTokens += metrics.cacheReadTokens;
-  stats.cacheHitSavedCost += Math.max(0, cacheHitSaved - cacheWriteExtra);
+
+  // Only count cache savings that Pruner created (message history breakpoints).
+  // Claude Code's own system/tools caching is NOT our contribution.
+  if (!metrics.clientCacheDetected) {
+    const cacheHitSaved =
+      (metrics.cacheReadTokens / 1_000_000) *
+      (pricing.inputPerMillion - pricing.cacheReadPerMillion);
+    const cacheWriteExtra =
+      (metrics.cacheCreationTokens / 1_000_000) *
+      (pricing.cacheWritePerMillion - pricing.inputPerMillion);
+    stats.cacheHitTokens += metrics.cacheReadTokens;
+    stats.cacheHitSavedCost += Math.max(0, cacheHitSaved - cacheWriteExtra);
+  }
+  
   stats.savedCost = stats.pruneSavedCost + stats.cacheHitSavedCost;
   if (metrics.origVerified && metrics.compVerified) stats.verifiedRequests++;
 }

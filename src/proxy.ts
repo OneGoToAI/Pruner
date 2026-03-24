@@ -257,6 +257,7 @@ export class AnthropicProxy implements ProxyServer {
               compVerified,
               cacheReadTokens: usage.cache_read_input_tokens ?? 0,
               cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+              clientCacheDetected,
             };
             recordRequest(metrics);
             this.printRequestLog(metrics, clientCacheDetected);
@@ -285,6 +286,7 @@ export class AnthropicProxy implements ProxyServer {
             compVerified,
             cacheReadTokens: usage.cache_read_input_tokens ?? 0,
             cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+            clientCacheDetected,
           };
           recordRequest(metrics);
           this.printRequestLog(metrics, clientCacheDetected);
@@ -325,7 +327,6 @@ export class AnthropicProxy implements ProxyServer {
     const pruneSaved = (savedTokens / 1_000_000) * pricing.inputPerMillion;
     const stats = getStats();
 
-    // ✓ = verified by Anthropic API  ~ = tiktoken estimate
     const verifiedBadge = (origVerified && compVerified) ? '✓' : '~';
 
     // Build plain-text log line (written to session.log regardless of quiet mode)
@@ -335,19 +336,15 @@ export class AnthropicProxy implements ProxyServer {
     } else {
       plainParts.push(`${formatNumber(origTokens)} tok ${verifiedBadge}`);
     }
-    if (cacheReadTokens > 0) {
+    if (cacheReadTokens > 0 && !clientCacheDetected) {
       const cacheSaved = (cacheReadTokens / 1_000_000) * (pricing.inputPerMillion - pricing.cacheReadPerMillion);
       plainParts.push(`⚡ ${formatNumber(cacheReadTokens)} cached $${cacheSaved.toFixed(4)}`);
-    } else if (clientCacheDetected) {
-      plainParts.push('⚡ cache warming…');
     }
-    plainParts.push(`total saved $${stats.savedCost.toFixed(4)}`);
+    plainParts.push(`total saved $${stats.pruneSavedCost.toFixed(4)}`);
     appendSessionLog(`[${new Date().toISOString()}] ${plainParts.join('  ·  ')}`);
 
-    // In quiet mode, skip inline stderr output — stats are in ~/.pruner/session.log
     if (optimizer.quiet) return;
 
-    // Inline output (coloured)
     const badge = (origVerified && compVerified) ? chalk.green('✓') : chalk.dim('~');
     const parts: string[] = [];
     parts.push(chalk.bold.cyan(`req #${stats.requests}`));
@@ -366,7 +363,8 @@ export class AnthropicProxy implements ProxyServer {
     } else {
       parts.push(chalk.dim(`${formatNumber(origTokens)} tok `) + badge);
     }
-    if (cacheReadTokens > 0) {
+    // Only show cache stats that Pruner actually created (not Claude Code's own caching)
+    if (cacheReadTokens > 0 && !clientCacheDetected) {
       const cacheSaved =
         (cacheReadTokens / 1_000_000) * (pricing.inputPerMillion - pricing.cacheReadPerMillion);
       parts.push(
@@ -375,10 +373,8 @@ export class AnthropicProxy implements ProxyServer {
         chalk.dim('  ') +
         chalk.yellow(`$${cacheSaved.toFixed(4)}`),
       );
-    } else if (clientCacheDetected) {
-      parts.push(chalk.dim('⚡ cache warming…'));
     }
-    parts.push(chalk.dim('total saved ') + chalk.bold.yellow(`$${stats.savedCost.toFixed(4)}`));
+    parts.push(chalk.dim('total saved ') + chalk.bold.yellow(`$${stats.pruneSavedCost.toFixed(4)}`));
 
     const content = parts.join(chalk.dim('  ·  '));
     const prefix = chalk.dim('╰─ ') + chalk.bold.green('Pruner') + chalk.dim(' ─╼  ');
